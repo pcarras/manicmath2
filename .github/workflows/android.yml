@@ -1,6 +1,6 @@
 # Builds the Android app (a Trusted Web Activity wrapping the live site) and sends it to Google Play.
 #
-# Run it from the Actions tab ("Run workflow") or by pushing a tag like v4.2.0.
+# Runs from the Actions tab ("Run workflow") or when main is pushed to the play-release branch.
 # Secrets (Settings > Secrets and variables > Actions):
 #   ANDROID_KEYSTORE_BASE64    upload key (base64 of the .keystore file), alias "upload" or ANDROID_KEY_ALIAS
 #   ANDROID_KEYSTORE_PASSWORD  keystore password
@@ -19,7 +19,7 @@ on:
         description: 'Release status: completed, or draft while the app is still a draft in Play Console'
         default: completed
   push:
-    tags: ['v*']
+    branches: [play-release]
 permissions:
   contents: read
 jobs:
