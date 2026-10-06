@@ -1,0 +1,35 @@
+# One-off: copies the images and sounds from the live site into the repository
+# (the original source folder was never pushed). Safe to delete after it has run.
+name: Restore binary assets
+on:
+  push:
+    paths: ['.github/workflows/restore-assets.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download assets from production
+        run: |
+          set -e
+          BASE=https://manic-math-2-pwa.vercel.app
+          for f in icecircle.png icesquare.png icon-180.png icon-192.png icon-512.png icon-maskable-512.png icon.png; do
+            curl -fsSL "$BASE/assets/$f" -o "assets/$f" --create-dirs
+          done
+          for f in clickbutton.mp3 clickbutton.ogg comet.mp3 comet.ogg drop.mp3 explosion1.mp3 explosion1.ogg gravity.mp3 \
+                   newobj.mp3 pop.mp3 pop2.mp3 scoredown.mp3 scoreup.mp3 select.mp3 snd_blocopesado.mp3 snd_bonus1.mp3 \
+                   snd_cash.mp3 snd_coin1.mp3 snd_error2.mp3 snd_gearsold.mp3 snd_gift.mp3 snd_olho.mp3 snd_recycle.mp3 \
+                   snd_short1.mp3 snd_time.mp3 snd_time.ogg soundtrack3.ogg soundtrack3.wav sparks.mp3; do
+            curl -fsSL "$BASE/sounds/$f" -o "sounds/$f" --create-dirs
+          done
+          ls -la assets sounds
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets sounds
+          git diff --cached --quiet || git commit -m "Restore images and sounds from the production deploy"
+          git push

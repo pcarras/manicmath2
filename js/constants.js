@@ -28,7 +28,8 @@ export const CONSTANTS = {
     ICE_CHANCE: 0.15,          // share of number/operator pieces that freeze
     ICE_FREEZE_MS: 5000,       // time for the ice cover to go from clear to opaque
     DANGER_MS: 1200,           // a settled piece above the death line for this long ends the game
-    DAILY_MS: 120000           // daily challenge length (time attack)
+    DAILY_MS: 120000,          // daily challenge length (time attack)
+    SPRINT_MS: 60000           // sprint mode length
 };
 
 // Matter.js body options shared by the game and the perf test

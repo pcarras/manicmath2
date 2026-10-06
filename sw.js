@@ -21,10 +21,14 @@ const ASSETS = [
     './js/display.js',
     './js/achievements.js',
     './js/music.js',
+    './js/progress.js',
+    './js/ranking.js',
     './js/scenes/AchievementsScene.js',
     './js/scenes/GameScene.js',
     './js/scenes/MenuScene.js',
     './js/scenes/TestScene.js',
+    './js/scenes/ShopScene.js',
+    './js/scenes/RankingScene.js',
     './assets/icon-192.png',
     './assets/icon-512.png',
     './assets/icon-maskable-512.png',
@@ -47,6 +51,8 @@ self.addEventListener('activate', (e) => {
 // Network first so new deploys reach phones immediately; cache only as offline fallback
 self.addEventListener('fetch', (e) => {
     if (e.request.method !== 'GET') return;
+    // The ranking is always live: never answer it from the cache
+    if (new URL(e.request.url).pathname.includes('/api/')) return;
     e.respondWith(
         fetch(e.request)
             .then((response) => {

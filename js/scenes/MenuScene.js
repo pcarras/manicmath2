@@ -4,8 +4,10 @@ import { installMode, install, onInstallChange, safeAreaTop } from '../pwa.js';
 import { t } from '../i18n.js';
 import { isDebug, toggleDebug, settings } from '../settings.js';
 import { stats, daily } from '../stats.js';
-import { chunkyButton, roundButton, openSettings } from '../ui.js';
+import { chunkyButton, roundButton, openSettings, modal } from '../ui.js';
 import { view, setupCamera } from '../display.js';
+import { beans, onProgressChange, streakInfo, missions, missionText } from '../progress.js';
+import { modeBest } from '../stats.js';
 
 export class MenuScene extends Phaser.Scene {
     constructor() {
@@ -20,9 +22,9 @@ export class MenuScene extends Phaser.Scene {
         createStarfield(this);
         const titleSize = `${Math.min(62, Math.floor((w - 32) / 6.4))}px`;
 
-        // Floating math symbols in background
+        // Floating math symbols in background (off with "less motion")
         const symbols = ['1', '2', '3', '+', '-', '×', '÷', '=', '7', '9'];
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < (settings.get('reduceMotion') ? 0 : 12); i++) {
             const sym = this.add.text(
                 Phaser.Math.Between(20, w - 20),
                 Phaser.Math.Between(50, h - 50),
@@ -104,30 +106,64 @@ export class MenuScene extends Phaser.Scene {
             openSettings(this, { onClose: (langChanged) => { if (langChanged) this.scene.restart(); } });
         }, { radius: 20, depth: 20 });
 
+        // Coffee beans (top centre)
+        const pill = this.add.graphics().setDepth(19);
+        pill.fillStyle(0x2b160b, 0.92);
+        pill.fillRoundedRect(w / 2 - 54, top + 18, 108, 32, 16);
+        pill.lineStyle(2, 0xc68a4a, 0.9);
+        pill.strokeRoundedRect(w / 2 - 54, top + 18, 108, 32, 16);
+        const beansText = this.add.text(w / 2, top + 34, `☕ ${beans()}`, {
+            fontFamily: 'Righteous', fontSize: '18px', color: '#ffd9a8'
+        }).setOrigin(0.5).setDepth(20);
+        const offBeans = onProgressChange(() => {
+            if (beansText.active) beansText.setText(`☕ ${beans()}`);
+        });
+
         // Main buttons
         const go = (key, data) => () => {
             this.cameras.main.fade(250, 0, 0, 0, false, (cam, progress) => {
                 if (progress === 1) this.scene.start(key, typeof data === 'function' ? data() : data);
             });
         };
+        this.go = go;
         const bw = Math.min(250, w - 64);
-        let y = top + h * 0.42;
-        const gap = Math.min(84, (h - 60 - y) / 3.7);
+        let y = top + h * 0.4;
+        const gap = Math.min(80, (h - 70 - y) / 4.6);
         chunkyButton(this, w / 2, y, t('play'), 0x22c55e,
-            go('GameScene', () => ({ tutorial: !settings.get('tutorialDone') })), { width: bw, height: 70, fontSize: 32, delay: 200 });
-        y += gap + 10;
+            go('GameScene', () => ({ tutorial: !settings.get('tutorialDone') })), { width: bw, height: 66, fontSize: 32, delay: 200 });
+        y += gap + 8;
 
-        // Daily challenge, with today's best underneath
+        // Daily challenge, with the streak and today's best underneath
         chunkyButton(this, w / 2, y, t('daily'), 0xa855f7, go('GameScene', { daily: true }),
-            { width: bw, height: 56, fontSize: 21, delay: 280 });
+            { width: bw, height: 54, fontSize: 21, delay: 280 });
         const todayBest = daily.best();
-        this.add.text(w / 2, y + 40, `${t('today')}: ${todayBest > 0 ? todayBest : '—'}`, {
-            fontFamily: 'Righteous', fontSize: '13px', color: '#c4a7ff'
+        const st = streakInfo();
+        const flame = st.count > 0 ? `🔥 ${st.count}${st.doneToday ? ' ✓' : ''}   ·   ` : '';
+        this.add.text(w / 2, y + 39, `${flame}${t('today')}: ${todayBest > 0 ? todayBest : '—'}`, {
+            fontFamily: 'Righteous', fontSize: '13px', color: st.count > 0 && !st.doneToday ? '#ffb238' : '#c4a7ff'
         }).setOrigin(0.5).setDepth(10);
         y += gap + 8;
 
-        chunkyButton(this, w / 2, y, t('tutorial'), 0xf59e0b, go('GameScene', { tutorial: true }),
-            { width: bw, height: 54, fontSize: 22, delay: 340 });
+        chunkyButton(this, w / 2, y, t('modes'), 0xf59e0b, () => this.openModes(),
+            { width: bw, height: 50, fontSize: 22, delay: 340 });
+        y += gap - 4;
+
+        // Missions / shop / ranking row
+        const third = (bw - 16) / 3;
+        const left = w / 2 - bw / 2 + third / 2;
+        const done = missions().filter((m) => m.done).length;
+        const missionsBtn = chunkyButton(this, left, y, `${t('missions')}`, 0x0d9488, () => this.openMissions(),
+            { width: third, height: 44, fontSize: third < 80 ? 12 : 14, delay: 380 });
+        if (done < 3) {
+            const dot = this.add.circle(left + third / 2 - 6, y - 20, 9, 0xef4444).setDepth(12).setStrokeStyle(2, 0x140a24);
+            const n = this.add.text(dot.x, dot.y, String(3 - done), { fontFamily: 'Righteous', fontSize: '12px', color: '#fff' })
+                .setOrigin(0.5).setDepth(13);
+            missionsBtn.once('destroy', () => { dot.destroy(); n.destroy(); });
+        }
+        chunkyButton(this, left + third + 8, y, t('shop'), 0xc2410c, go('ShopScene'),
+            { width: third, height: 44, fontSize: third < 80 ? 12 : 14, delay: 420 });
+        chunkyButton(this, left + 2 * (third + 8), y, t('ranking'), 0x6366f1, go('RankingScene'),
+            { width: third, height: 44, fontSize: third < 80 ? 12 : 14, delay: 460 });
         y += gap;
 
         // Install / fullscreen: only when the browser can actually do it
@@ -142,7 +178,7 @@ export class MenuScene extends Phaser.Scene {
             }
             if (mode && !this.installBtn) {
                 this.installBtn = chunkyButton(this, w / 2, installY, label, 0x0ea5e9, () => install(),
-                    { width: bw, height: 54, fontSize: 22, delay: 440 });
+                    { width: bw, height: 46, fontSize: 19, delay: 500 });
                 this.installBtn.labelText = label;
             }
         };
@@ -163,6 +199,7 @@ export class MenuScene extends Phaser.Scene {
         this.scale.on('resize', onResize);
         this.events.once('shutdown', () => {
             offInstall();
+            offBeans();
             clearTimeout(resizeTimer);
             this.scale.off('resize', onResize);
         });
@@ -189,5 +226,109 @@ export class MenuScene extends Phaser.Scene {
                 this.tweens.add({ targets: note, alpha: 0, delay: 600, duration: 300 });
             }
         });
+    }
+
+    // Game modes: classic, zen, sprint and the tutorial
+    openModes() {
+        const rows = [
+            ['classic', 'classicDesc', 0x22c55e, () => ({ mode: 'classic' })],
+            ['zen', 'zenDesc', 0x0d9488, () => ({ mode: 'zen' })],
+            ['sprint', 'sprintDesc', 0xef4444, () => ({ mode: 'sprint' })],
+            ['tutorial', 'howToDesc', 0xf59e0b, () => ({ tutorial: true })]
+        ];
+        const m = modal(this, { depth: 700, height: 96 + rows.length * 84 + 70, title: t('modes') });
+        const { panel } = m;
+        let y = panel.y + 104;
+        const sprintBest = modeBest.get('sprint');
+        rows.forEach(([key, desc, color, data]) => {
+            m.add(chunkyButton(this, panel.cx, y, t(key), color, () => { m.close(); this.go('GameScene', data)(); },
+                { width: Math.min(240, panel.w - 48), height: 46, fontSize: 20, depth: m.depth, enter: false }));
+            let sub = t(desc);
+            if (key === 'sprint' && sprintBest > 0) sub += `  ·  🏆 ${sprintBest}`;
+            m.add(this.add.text(panel.cx, y + 36, sub, {
+                fontFamily: 'Roboto', fontSize: '13px', color: '#c9c7ee', align: 'center', wordWrap: { width: panel.w - 40 }
+            }).setOrigin(0.5).setDepth(m.depth));
+            y += 84;
+        });
+        m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 40, t('close'), 0x6366f1, () => m.close(),
+            { width: 160, height: 44, fontSize: 20, depth: m.depth, enter: false }));
+    }
+
+    // Today's missions + the streak calendar (last 7 days)
+    openMissions() {
+        const list = missions();
+        const m = modal(this, { depth: 700, height: 520, title: t('missionsToday') });
+        const { panel } = m;
+        const d = m.depth;
+        let y = panel.y + 92;
+        const barW = panel.w - 120;
+        list.forEach((mi) => {
+            m.add(this.add.text(panel.x + 26, y, missionText(mi), {
+                fontFamily: 'Righteous', fontSize: '16px', color: mi.done ? '#4ade80' : '#ffffff',
+                wordWrap: { width: panel.w - 110 }
+            }).setOrigin(0, 0.5).setDepth(d));
+            m.add(this.add.text(panel.x + panel.w - 26, y, mi.done ? '✓' : `+${mi.beans} ☕`, {
+                fontFamily: 'Righteous', fontSize: mi.done ? '22px' : '15px', color: mi.done ? '#4ade80' : '#e8b878'
+            }).setOrigin(1, 0.5).setDepth(d));
+            const g = m.add(this.add.graphics().setDepth(d));
+            g.fillStyle(0x2a1c52, 1);
+            g.fillRoundedRect(panel.x + 26, y + 16, barW, 8, 4);
+            const f = Math.min(1, mi.progress / mi.n);
+            if (f > 0) {
+                g.fillStyle(mi.done ? 0x4ade80 : 0xffd23f, 1);
+                g.fillRoundedRect(panel.x + 26, y + 16, Math.max(8, barW * f), 8, 4);
+            }
+            m.add(this.add.text(panel.x + 30 + barW, y + 20, `${Math.min(mi.progress, mi.n)}/${mi.n}`, {
+                fontFamily: 'Roboto', fontSize: '11px', color: '#a5a8ff'
+            }).setOrigin(0, 0.5).setDepth(d));
+            y += 62;
+        });
+
+        // Streak: 7 cups, oldest to today
+        const st = streakInfo();
+        y += 6;
+        m.add(this.add.text(panel.cx, y, `🔥 ${t('streak')}: ${t('streakDays', { n: st.count })}`, {
+            fontFamily: 'Righteous', fontSize: '19px', color: '#ffb238'
+        }).setOrigin(0.5).setDepth(d));
+        y += 44;
+        const today = new Date();
+        const cupGap = Math.min(40, (panel.w - 40) / 7);
+        const x0 = panel.cx - cupGap * 3;
+        const names = t('weekdays');
+        for (let i = 0; i < 7; i++) {
+            const day = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (6 - i)));
+            const key = day.toISOString().slice(0, 10);
+            const full = st.days.includes(key);
+            const x = x0 + i * cupGap;
+            const g = m.add(this.add.graphics().setDepth(d));
+            this.drawCup(g, x, y, full, i === 6);
+            m.add(this.add.text(x, y + 22, names[(day.getUTCDay() + 6) % 7], {
+                fontFamily: 'Roboto', fontSize: '11px', color: i === 6 ? '#ffd23f' : '#8a84b0'
+            }).setOrigin(0.5).setDepth(d));
+        }
+        y += 50;
+        m.add(this.add.text(panel.cx, y, `${t('streakBest', { n: st.best })}   ·   ${t('spares', { n: st.freezes })}`, {
+            fontFamily: 'Roboto', fontSize: '13px', color: '#c9c7ee'
+        }).setOrigin(0.5).setDepth(d));
+        m.add(this.add.text(panel.cx, y + 20, t('spareHelp'), {
+            fontFamily: 'Roboto', fontSize: '11px', color: '#8a84b0', align: 'center', wordWrap: { width: panel.w - 40 }
+        }).setOrigin(0.5).setDepth(d));
+        m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 40, t('close'), 0x6366f1, () => m.close(),
+            { width: 160, height: 44, fontSize: 20, depth: d, enter: false }));
+    }
+
+    // Little espresso cup: full (coffee + crema) when that day's challenge was done
+    drawCup(g, x, y, full, isToday) {
+        g.lineStyle(2, isToday ? 0xffd23f : 0xf4efe6, full ? 1 : 0.45);
+        g.fillStyle(full ? 0xf4efe6 : 0x1b1238, 1);
+        g.fillRoundedRect(x - 11, y - 9, 22, 18, { tl: 2, tr: 2, bl: 8, br: 8 });
+        g.strokeRoundedRect(x - 11, y - 9, 22, 18, { tl: 2, tr: 2, bl: 8, br: 8 });
+        g.strokeCircle(x + 13, y - 2, 4);
+        if (full) {
+            g.fillStyle(0x3b1e0e, 1);
+            g.fillRect(x - 9, y - 7, 18, 4);
+            g.fillStyle(0xc68a4a, 1);
+            g.fillRect(x - 9, y - 7, 18, 2);
+        }
     }
 }

@@ -4,6 +4,8 @@ import { GameScene } from './scenes/GameScene.js';
 import { MenuScene } from './scenes/MenuScene.js';
 import { TestScene } from './scenes/TestScene.js';
 import { AchievementsScene } from './scenes/AchievementsScene.js';
+import { ShopScene } from './scenes/ShopScene.js';
+import { RankingScene } from './scenes/RankingScene.js';
 import { initPWA } from './pwa.js';
 import { playIntro } from './bica.js';
 
@@ -13,7 +15,10 @@ initPWA();
 // The Bica Games intro plays meanwhile; the game starts when both are done.
 const fontsReady = document.fonts && document.fonts.load
     ? Promise.race([
-        document.fonts.load('40px Righteous').catch(() => {}),
+        Promise.all([
+            document.fonts.load('40px Righteous'),
+            document.fonts.load('16px "Press Start 2P"')   // Retro Pixel theme labels
+        ]).catch(() => {}),
         new Promise((resolve) => setTimeout(resolve, 2500))
     ])
     : Promise.resolve();
@@ -40,7 +45,7 @@ const config = {
         default: 'matter',
         matter: MATTER_CONFIG
     },
-    scene: [MenuScene, GameScene, AchievementsScene, TestScene]
+    scene: [MenuScene, GameScene, AchievementsScene, ShopScene, RankingScene, TestScene]
 };
 
 window.game = new Phaser.Game(config);

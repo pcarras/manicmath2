@@ -30,6 +30,23 @@ export const stats = {
     }
 };
 
+// Best score per extra mode (sprint). Zen has no score to beat.
+const MODE_KEY = 'mm-mode-best';
+
+export const modeBest = {
+    get(mode) {
+        try { return JSON.parse(localStorage.getItem(MODE_KEY) || '{}')[mode] || 0; } catch { return 0; }
+    },
+    record(mode, score) {
+        let all = {};
+        try { all = JSON.parse(localStorage.getItem(MODE_KEY) || '{}'); } catch { /* reset */ }
+        const previousBest = all[mode] || 0;
+        all[mode] = Math.max(previousBest, score);
+        try { localStorage.setItem(MODE_KEY, JSON.stringify(all)); } catch { /* private mode */ }
+        return { isRecord: score > previousBest && score > 0, previousBest, best: all[mode] };
+    }
+};
+
 // Daily challenge: one shared seed per UTC day, so everyone plays the same challenge on the same day
 export function todayKey() {
     return new Date().toISOString().slice(0, 10);

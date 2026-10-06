@@ -1,4 +1,5 @@
 import { RES, view } from './display.js';
+import { settings } from './settings.js';
 
 // Realistic night sky, painted once into a static texture (zero per-frame cost)
 // plus a handful of twinkling stars driven by tweens.
@@ -153,7 +154,7 @@ export function createStarfield(scene, depth = -10) {
 
     const bg = scene.add.image(0, 0, key).setOrigin(0).setDisplaySize(w, h).setDepth(depth);
 
-    const twinkles = Phaser.Math.Clamp(Math.round((w * h) / 14000), 12, 40);
+    const twinkles = settings.get('reduceMotion') ? 0 : Phaser.Math.Clamp(Math.round((w * h) / 14000), 12, 40);
     for (let i = 0; i < twinkles; i++) {
         const star = scene.add.image(Math.random() * w, Math.random() * h, 'starDot')
             .setTint(pick(TWINKLE_TINTS))

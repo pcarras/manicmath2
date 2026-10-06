@@ -175,10 +175,10 @@ export function modal(scene, { depth = 700, width = 320, height = 360, title = '
 function toggleRow(scene, m, y, label, valueText, isOn, onTap) {
     const { panel, depth } = m;
     m.add(scene.add.text(panel.x + 28, y, label, {
-        fontFamily: 'Righteous', fontSize: '22px', color: '#e5e3ff'
+        fontFamily: 'Righteous', fontSize: '20px', color: '#e5e3ff'
     }).setOrigin(0, 0.5).setDepth(depth));
     m.add(chunkyButton(scene, panel.x + panel.w - 72, y, valueText, isOn ? 0x22c55e : 0x6b7280, onTap,
-        { width: 96, height: 40, fontSize: 18, depth, enter: false }));
+        { width: 96, height: 36, fontSize: 16, depth, enter: false }));
 }
 
 // Settings panel. onClose(languageChanged) runs after it closes.
@@ -190,29 +190,43 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
     const render = () => {
         const first = !m;
         if (m) m.close();
-        m = modal(scene, { depth, height: 482, title: t('settings'), fade: first });
+        const ROW = 52;
+        m = modal(scene, { depth, height: 100 + ROW * 7 + 76, title: t('settings'), fade: first });
         const { panel } = m;
-        let y = panel.y + 108;
+        let y = panel.y + 96;
         ['music', 'sfx', 'vibration'].forEach((key) => {
             const on = settings.get(key);
             toggleRow(scene, m, y, t(key), on ? t('on') : t('off'), on, () => {
                 settings.set(key, !on);
                 render();
             });
-            y += 62;
+            y += ROW;
         });
         toggleRow(scene, m, y, t('language'), lang().toUpperCase(), true, () => {
             settings.set('lang', lang() === 'pt' ? 'en' : 'pt');
             render();
         });
-        y += 62;
+        y += ROW;
         // Sharp HiDPI rendering costs GPU fill: NORMAL renders at 1x for weaker phones (applied on reload)
         const high = settings.get('graphics') !== 'normal';
         toggleRow(scene, m, y, t('graphics'), high ? t('high') : t('normal'), high, () => {
             settings.set('graphics', high ? 'normal' : 'high');
             render();
         });
-        m.add(chunkyButton(scene, panel.cx, panel.y + panel.h - 46, t('close'), 0x6366f1, () => {
+        y += ROW;
+        // Accessibility: high contrast pieces (applies to the next game) and less motion
+        const hc = !!settings.get('highContrast');
+        toggleRow(scene, m, y, t('highContrast'), hc ? t('high') : t('normal'), hc, () => {
+            settings.set('highContrast', !hc);
+            render();
+        });
+        y += ROW;
+        const calm = !!settings.get('reduceMotion');
+        toggleRow(scene, m, y, t('reduceMotion'), calm ? t('less') : t('full'), !calm, () => {
+            settings.set('reduceMotion', !calm);
+            render();
+        });
+        m.add(chunkyButton(scene, panel.cx, panel.y + panel.h - 42, t('close'), 0x6366f1, () => {
             m.close();
             if (settings.get('graphics') !== startGraphics) {
                 window.location.reload();

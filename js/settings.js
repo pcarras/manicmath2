@@ -1,7 +1,11 @@
 // Player settings (persisted per device) + debug flag.
 
 const KEY = 'mm-settings';
-const DEFAULTS = { music: true, sfx: true, vibration: true, lang: 'auto', graphics: 'high' };
+const DEFAULTS = {
+    music: true, sfx: true, vibration: true, lang: 'auto', graphics: 'high',
+    highContrast: false,   // thick outlines + bigger, bolder labels on the pieces
+    reduceMotion: false    // no camera shake / flash, calmer backgrounds
+};
 
 function load() {
     try {
@@ -31,6 +35,26 @@ export const settings = {
 
 export function vibrate(pattern) {
     if (state.vibration && navigator.vibrate) navigator.vibrate(pattern);
+}
+
+// One pattern per kind of event, so the hand can tell what happened without looking.
+// (navigator.vibrate exists on Android; iPhones ignore it.)
+const HAPTICS = {
+    tap: 8,
+    success: [12, 30, 18],
+    fail: [45, 35, 45],
+    combo: [10, 25, 10, 25, 24],
+    bomb: [70, 30, 120],
+    special: [18, 20, 18],
+    levelUp: [20, 40, 20, 40, 60],
+    toast: [20, 30, 20],
+    record: [30, 30, 30, 30, 80],
+    gameOver: [100, 60, 200],
+    tick: 6
+};
+
+export function haptic(kind) {
+    vibrate(HAPTICS[kind] || 10);
 }
 
 // Debug tools (perf HUD, TEST PERF) are hidden from players.
