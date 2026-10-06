@@ -36,6 +36,9 @@ jobs:
       - name: Install Bubblewrap
         run: |
           npm install -g @bubblewrap/cli@1.25.0
+          # Bubblewrap still validates the SDK by its legacy "tools" folder: point it at cmdline-tools
+          [ -e "$ANDROID_HOME/tools" ] || sudo ln -s "$ANDROID_HOME/cmdline-tools/latest" "$ANDROID_HOME/tools"
+          ls "$ANDROID_HOME" "$ANDROID_HOME/build-tools" | tr '\n' ' ' | sed 's/^/::notice::SDK: /'; echo
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
       - name: Version from version.js, build number from the run
