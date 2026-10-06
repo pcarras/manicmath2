@@ -1,0 +1,1670 @@
+
+import { COLORS, CONSTANTS, PIECE_BODY, LEVELS, SCORING } from '../constants.js';
+import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX } from '../textures.js';
+import { INV, RES, view, setupCamera } from '../display.js';
+import { createStarfield } from '../starfield.js';
+import { safeAreaTop } from '../pwa.js';
+import { t } from '../i18n.js';
+import { settings, vibrate, isDebug } from '../settings.js';
+import { chunkyButton, roundButton, modal, openSettings } from '../ui.js';
+import { stats, daily, todayKey } from '../stats.js';
+import { report, achievementText, drawMedal } from '../achievements.js';
+import { MusicDirector } from '../music.js';
+
+const {
+    RADIUS: R, DIAMETER, TIMER_POWERUP_MS, HINT_POWERUP_MS,
+    ICE_CHANCE, ICE_FREEZE_MS, DANGER_MS, DAILY_MS
+} = CONSTANTS;
+
+const OPS = ['+', '-', '×', '÷'];
+const TAP_RADIUS_SQ = (R * 1.2) ** 2;
+
+function calc(a, op, b) {
+    switch (op) {
+        case '+': return a + b;
+        case '-': return a - b;
+        case '×': return a * b;
+        case '÷': return b !== 0 && a % b === 0 ? a / b : null;
+    }
+    return null;
+}
+
+export class GameScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'GameScene' });
+    }
+
+    init(data) {
+        this.tutorial = !!(data && data.tutorial);
+        // Daily challenge: same pieces and targets for everyone today (separate seeded streams so one
+        // player's actions never shift the sequence), time attack, all operators from the start
+        this.daily = !this.tutorial && !!(data && data.daily);
+        this.dailyKey = todayKey();
+        this.dailyRemaining = DAILY_MS;
+        this.lastDailySecs = -1;
+        this.pieceRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-pieces`]) : null;
+        this.targetRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-targets`]) : null;
+        this.level = 1;
+        this.solved = 0;
+        this.combo = 0;
+        this.bestCombo = 0;
+        this.lastSuccessAt = -Infinity;
+        this.streak = 0;
+        this.toastQueue = [];
+        this.toasting = false;
+        this.spawnDelay = LEVELS.spawnDelay(1);
+        this.tutPieces = [];
+        this.tutStep = -1;
+        this.tutTarget = null;
+        this.tutBubble = null;
+        this.hand = null;
+
+        this.score = 0;
+        this.target = 0;
+        this.pieces = [];                  // plain objects: { type, value|special, color, body, img, ice, selected, slot, alive, dangerMs }
+        this.slots = [null, null, null];   // pieces placed in the equation
+        this.slotDisplays = [null, null, null];
+        this.validating = false;
+        this.spawnTimer = 0;
+        this.spawnQueue = [];
+        this.gameOver = false;
+        this.gameStarted = false;
+        this.needsWake = false;
+
+        this.timerRemaining = 0;
+        this.hintRemaining = 0;
+        this.hintPieces = [];
+        this.hintRefresh = 0;
+        this.lastTimerSecs = -1;
+        this.lastHintSecs = -1;
+
+        this.dangerAcc = 0;
+        this.dangerTween = null;   // must reset: the old tween dies with the previous run on restart
+        this.solveAcc = 0;
+        this.forceQueue = false;
+        this.physMs = 0;
+        this.hudAcc = 0;
+
+        this.paused = false;
+        this.pauseUI = null;
+        this.hudObjs = [];         // everything rebuilt on resize / language change
+        this.upcoming = null;      // next random piece (shown in the NEXT preview)
+        this.nextKey = null;
+    }
+
+    preload() {
+        this.load.audio('bgMusic', ['sounds/soundtrack3.ogg', 'sounds/soundtrack3.wav']);
+        this.load.audio('explosionSound', 'sounds/explosion1.mp3');
+        this.load.audio('clickbutton', 'sounds/clickbutton.mp3');
+        this.load.audio('timeSound', 'sounds/snd_time.mp3');
+        this.load.audio('sparksSound', 'sounds/sparks.mp3');
+        this.load.audio('dropSound', 'sounds/drop.mp3');
+        this.load.audio('popSound', 'sounds/pop.mp3');
+        this.load.audio('bonusSound', 'sounds/snd_bonus1.mp3');
+        this.load.audio('impactSound', 'sounds/pop2.mp3');
+        preloadPieceAssets(this);
+    }
+
+    create() {
+        setupCamera(this);
+        const size = view(this);
+        this.w = size.w;
+        this.h = size.h;
+
+        const { Body, Sleeping } = Phaser.Physics.Matter.Matter;
+        this.Body = Body;
+        this.Sleeping = Sleeping;
+
+        this.debug = isDebug();
+        this.time.paused = false;
+        this.tweens.resumeAll();
+
+        ensureTextures(this);
+        this.bg = createStarfield(this);
+
+        // Walls reach far above the screen so pieces spawned off-screen stay inside; no ceiling
+        this.matter.world.setBounds(0, -this.h, this.w, this.h * 2, 200, true, true, false, true);
+        this.matter.world.on('beforeupdate', () => { this.physStart = performance.now(); });
+        this.matter.world.on('afterupdate', () => {
+            this.physMs = this.physMs * 0.9 + (performance.now() - this.physStart) * 0.1;
+        });
+        this.lastImpactAt = 0;
+        this.matter.world.on('collisionstart', (event) => this.onImpact(event));
+
+        this.createFx();
+        this.buildHud();
+        this.createRings();
+        if (this.tutorial) this.hand = this.add.image(0, 0, 'hand').setDepth(160).setVisible(false).setScale(INV);
+
+        this.input.on('pointerdown', this.onPointerDown, this);
+
+        this.sound.stopAll();
+        // Original soundtrack at levels 1-2, procedural chiptune tracks after (see music.js)
+        this.music = new MusicDirector(this);
+        this.music.setLevel(this.level);
+
+        // Auto-pause when the app goes to the background (call, notification, app switch)
+        this.game.events.on(Phaser.Core.Events.HIDDEN, this.pauseGame, this);
+        this.scale.on('resize', this.onResize, this);
+        const offSettings = settings.onChange((key) => {
+            if (key === 'music' && this.music && !this.gameOver) this.music.refresh();
+        });
+        this.events.once('shutdown', () => {
+            this.game.events.off(Phaser.Core.Events.HIDDEN, this.pauseGame, this);
+            this.scale.off('resize', this.onResize, this);
+            clearTimeout(this.hudTimer);
+            offSettings();
+            if (this.music) this.music.stop();
+        });
+
+        if (this.tutorial) {
+            this.startTutorial();
+            this.gameStarted = true;
+        } else {
+            this.newTarget();
+            this.countdown(() => { this.gameStarted = true; }, true);
+        }
+    }
+
+    // ------------------------------------------------------------------ layout
+
+    computeLayout() {
+        const w = this.w;
+        const s = Math.round(Phaser.Math.Clamp((w - 32) / 5.6, 48, 96));
+        const gap = Math.round(s * 0.12);
+        const eqW = s * 0.55;
+        const targetW = s * 1.5;
+        const total = 3 * s + 4 * gap + eqW + targetW;
+
+        // Keep the HUD below notches / the iOS status bar when installed full screen
+        const top = Math.round(safeAreaTop());
+        this.uiTop = top;
+        this.slotSize = s;
+        this.eqY = top + 50 + s / 2;
+        this.uiHeight = top + 50 + s + 16;
+        this.deathY = this.uiHeight;
+        this.slotScale = ((s * 0.94) / DIAMETER) * INV;
+
+        let x = (w - total) / 2;
+        this.slotPos = [];
+        for (let i = 0; i < 3; i++) {
+            this.slotPos.push({ x: x + s / 2, y: this.eqY });
+            x += s + gap;
+        }
+        this.equalsX = x + eqW / 2;
+        x += eqW + gap;
+        this.targetX = x + targetW / 2;
+    }
+
+    // Rebuilds the whole HUD for the current size / language, keeping the game state
+    buildHud() {
+        this.hudObjs.forEach((o) => o.destroy());
+        this.hudObjs = [];
+        if (this.dangerTween) {
+            this.dangerTween.remove();
+            this.dangerTween = null;
+        }
+
+        this.computeLayout();
+        this.createUI();
+
+        this.scoreText.setText(String(this.score));
+        this.targetText.setText(String(this.target));
+        this.timerBadge.setVisible(this.timerRemaining > 0);
+        this.hintBadge.setVisible(this.hintRemaining > 0);
+        this.lastTimerSecs = -1;
+        this.lastHintSecs = -1;
+        if (this.timerRemaining > 0) this.timerOverlay.setAlpha(0.1);
+        this.nextKey = null;
+        this.updateLevelHud();
+
+        for (let i = 0; i < 3; i++) {
+            const d = this.slotDisplays[i];
+            if (!d) continue;
+            const targets = d.ice ? [d.img, d.ice] : [d.img];
+            this.tweens.killTweensOf(targets);
+            targets.forEach((o) => o.setPosition(this.slotPos[i].x, this.slotPos[i].y).setScale(this.slotScale));
+        }
+    }
+
+    createUI() {
+        const w = this.w;
+        const h = this.h;
+        const s = this.slotSize;
+        const top = this.uiTop;
+        const hud = (o) => {
+            this.hudObjs.push(o);
+            return o;
+        };
+
+        const panel = hud(this.add.graphics().setDepth(100));
+        panel.fillStyle(0x000000, 0.45);
+        panel.fillRoundedRect(6, 8, w - 12, this.uiHeight - 4, 20);
+        panel.fillStyle(0x10112a, 0.96);
+        panel.fillRoundedRect(8, 6, w - 16, this.uiHeight - 10, 18);
+        panel.lineStyle(3, 0x140a24, 1);
+        panel.strokeRoundedRect(8, 6, w - 16, this.uiHeight - 10, 18);
+        panel.lineStyle(1.5, 0x6366f1, 0.45);
+        panel.strokeRoundedRect(12, 10, w - 24, this.uiHeight - 18, 15);
+
+        const scoreLabel = hud(this.add.text(22, top + 13, t('score'), {
+            fontFamily: 'Righteous', fontSize: '11px', color: '#7c7ff5', letterSpacing: 2
+        }).setDepth(101));
+        this.scoreText = hud(this.add.text(22, top + 25, '0', {
+            fontFamily: 'Righteous', fontSize: '20px', color: '#ffffff'
+        }).setDepth(101));
+        this.levelText = hud(this.add.text(22 + scoreLabel.width + 8, top + 13, '', {
+            fontFamily: 'Righteous', fontSize: '11px', color: '#ffd23f', letterSpacing: 1
+        }).setDepth(101));
+
+        // NEXT piece preview (Suika / Tetris / Threes all show what comes next)
+        const nextX = Math.round(Phaser.Math.Clamp(w * 0.4, 140, 175));
+        this.nextLabel = hud(this.add.text(nextX, top + 13, t('next'), {
+            fontFamily: 'Righteous', fontSize: '9px', color: '#7c7ff5', letterSpacing: 1
+        }).setOrigin(0.5, 0).setDepth(101));
+        this.nextIcon = hud(this.add.image(nextX, top + 36, '__DEFAULT').setScale(24 / TEX_PX).setDepth(101));
+
+        // Equation slots: [NUM] [OP] [NUM] = TARGET, centred
+        this.slotPos.forEach((pos, i) => {
+            const g = hud(this.add.graphics().setDepth(101));
+            g.fillStyle(0x070818, 1);
+            g.fillRoundedRect(pos.x - s / 2, pos.y - s / 2, s, s, s * 0.24);
+            g.lineStyle(2, 0x3a3a6e, 0.8);
+            g.strokeRoundedRect(pos.x - s / 2, pos.y - s / 2, s, s, s * 0.24);
+        });
+
+        hud(this.add.text(this.equalsX, this.eqY, '=', {
+            fontFamily: 'Righteous', fontSize: `${Math.round(s * 0.8)}px`, color: '#c7c9ff'
+        }).setOrigin(0.5).setDepth(101));
+
+        this.targetText = hud(this.add.text(this.targetX, this.eqY, '0', {
+            fontFamily: 'Righteous', fontSize: `${Math.round(s * 1.0)}px`, color: '#FFB347',
+            stroke: '#3b1d00', strokeThickness: 4,
+            shadow: { offsetX: 0, offsetY: 0, color: '#FF8C00', blur: 12, fill: true }
+        }).setOrigin(0.5).setDepth(101));
+
+        // Pause button + power-up badges (top right)
+        hud(roundButton(this, w - 32, top + 29, 'pause', () => this.pauseGame(), { radius: 16 }));
+        this.timerBadge = hud(this.createBadge(w - 92, 'piece_special_timer', '#60a5fa'));
+        this.hintBadge = hud(this.createBadge(w - 152, 'piece_special_hint', '#34D399'));
+
+        // Death line + red edge glow when the pile gets close
+        this.dangerLine = hud(this.add.graphics().setDepth(99));
+        this.dangerLine.lineStyle(2, 0xef4444, 1);
+        for (let x = 12; x < w - 12; x += 18) this.dangerLine.lineBetween(x, this.deathY, x + 9, this.deathY);
+        this.dangerLine.setAlpha(0.15);
+        this.vignette = hud(this.add.image(w / 2, h / 2, 'vignette').setDisplaySize(w, h).setDepth(95).setAlpha(0));
+
+        // Blue tint while the timer power-up holds the spawn
+        this.timerOverlay = hud(this.add.rectangle(w / 2, h / 2, w, h, 0x3b82f6, 1).setDepth(5).setAlpha(0));
+
+        // Level progress ("XP bar") along the bottom of the panel
+        this.levelBar = hud(this.add.graphics().setDepth(101));
+
+        if (this.debug) {
+            this.perfText = hud(this.add.text(12, this.uiHeight + 6, '', {
+                fontFamily: 'monospace', fontSize: '11px', color: '#00ff88'
+            }).setDepth(2000).setAlpha(0.7));
+        }
+    }
+
+    createBadge(x, iconKey, color) {
+        const badge = this.add.container(x, this.uiTop + 29).setDepth(101).setVisible(false);
+        const icon = this.add.image(-14, 0, iconKey).setScale(26 / TEX_PX);
+        const text = this.add.text(4, 0, '20', {
+            fontFamily: 'Righteous', fontSize: '18px', color
+        }).setOrigin(0, 0.5);
+        badge.add([icon, text]);
+        badge.label = text;
+        return badge;
+    }
+
+    createRings() {
+        this.selRings = [0, 1, 2].map(() =>
+            this.add.image(0, 0, 'ring').setTint(COLORS.selection).setDepth(12).setVisible(false).setScale(INV));
+
+        this.hintRings = [0, 1, 2].map(() => {
+            const ring = this.add.image(0, 0, 'ring').setTint(COLORS.hint).setDepth(12).setVisible(false).setScale(INV);
+            this.tweens.add({
+                targets: ring, scale: 1.12 * INV, alpha: 0.55,
+                duration: 450, yoyo: true, repeat: -1, ease: 'Sine.easeInOut'
+            });
+            return ring;
+        });
+    }
+
+    createFx() {
+        this.burst = this.add.particles(0, 0, 'particle', {
+            speed: { min: 120, max: 300 },
+            scale: { start: 0.9, end: 0 },
+            blendMode: 'ADD',
+            lifespan: 420,
+            gravityY: 300,
+            emitting: false
+        }).setDepth(200);
+
+        this.starBurst = this.add.particles(0, 0, 'starParticle', {
+            speed: { min: 90, max: 200 },
+            scale: { start: 0.6, end: 0 },
+            lifespan: 500,
+            emitting: false
+        }).setDepth(200);
+
+        this.sparks = this.add.particles(0, 0, 'spark', {
+            speed: { min: 100, max: 420 },
+            scale: { start: 2, end: 0 },
+            blendMode: 'ADD',
+            lifespan: 500,
+            emitting: false
+        }).setDepth(200);
+
+        // One trail emitter per slot, follows the piece flying into the equation
+        this.trails = [0, 1, 2].map(() => this.add.particles(0, 0, 'particle', {
+            speed: { min: 5, max: 30 },
+            scale: { start: 0.7, end: 0 },
+            alpha: { start: 0.9, end: 0 },
+            lifespan: 320,
+            frequency: 12,
+            blendMode: 'ADD',
+            emitting: false
+        }).setDepth(140));
+    }
+
+    // ------------------------------------------------------------------ loop
+
+    update(time, delta) {
+        if (this.paused) return;
+
+        // Sync sprites to bodies. Rotation is ignored on purpose: labels always stay upright (no 6/9 confusion).
+        const pieces = this.pieces;
+        for (let i = 0; i < pieces.length; i++) {
+            const p = pieces[i];
+            const pos = p.body.position;
+            p.img.x = pos.x;
+            p.img.y = pos.y;
+            if (p.ice) {
+                p.ice.x = pos.x;
+                p.ice.y = pos.y;
+            }
+        }
+
+        for (let i = 0; i < 3; i++) {
+            const sel = this.slots[i];
+            const ring = this.selRings[i];
+            if (sel) ring.setVisible(true).setPosition(sel.img.x, sel.img.y);
+            else ring.setVisible(false);
+
+            const d = this.slotDisplays[i];
+            if (d && d.ice && d.piece.ice) d.ice.alpha = d.piece.ice.alpha;
+
+            const hp = this.hintPieces[i];
+            const hring = this.hintRings[i];
+            if (hp && hp.alive) hring.setVisible(true).setPosition(hp.img.x, hp.img.y);
+            else hring.setVisible(false);
+        }
+
+        if (this.hand) {
+            const tp = this.tutTarget;
+            if (tp && tp.alive && !tp.selected) {
+                this.hand.setVisible(true).setPosition(tp.img.x, tp.img.y - R - 30 + Math.sin(time / 150) * 6);
+            } else {
+                this.hand.setVisible(false);
+            }
+        }
+
+        if (this.needsWake) {
+            for (let i = 0; i < pieces.length; i++) this.Sleeping.set(pieces[i].body, false);
+            this.needsWake = false;
+        }
+
+        if (this.debug) {
+            this.hudAcc += delta;
+            if (this.hudAcc >= 500) {
+                this.hudAcc = 0;
+                this.perfText.setText(
+                    `${Math.round(this.game.loop.actualFps)} fps · física ${this.physMs.toFixed(2)} ms · ${pieces.length} peças`);
+            }
+        }
+
+        if (this.gameOver || !this.gameStarted) return;
+
+        if (this.daily) {
+            this.dailyRemaining -= delta;
+            const secs = Math.max(0, Math.ceil(this.dailyRemaining / 1000));
+            if (secs !== this.lastDailySecs) {
+                this.lastDailySecs = secs;
+                this.updateLevelHud();
+                if (secs > 0 && secs <= 10) {
+                    if (settings.get('sfx') && this.cache.audio.exists('clickbutton')) {
+                        this.sound.play('clickbutton', { volume: 0.4, detune: 600 });
+                    }
+                    this.tweens.add({ targets: this.levelText, scale: 1.35, duration: 120, yoyo: true });
+                }
+            }
+            if (this.dailyRemaining <= 0) {
+                this.endGame('time');
+                return;
+            }
+        }
+
+        const nextKey = this.tutorial ? null : pieceTextureKey(this.peekNext());
+        this.nextIcon.setVisible(!this.tutorial);
+        this.nextLabel.setVisible(!this.tutorial);
+        if (nextKey && nextKey !== this.nextKey) {
+            this.nextKey = nextKey;
+            this.nextIcon.setTexture(nextKey).setScale(14 / TEX_PX);
+            this.tweens.add({ targets: this.nextIcon, scale: 24 / TEX_PX, duration: 220, ease: 'Back.easeOut' });
+        }
+
+        // Spawning never stops, except while the timer power-up is active
+        if (this.timerRemaining > 0) {
+            this.timerRemaining -= delta;
+            const secs = Math.max(0, Math.ceil(this.timerRemaining / 1000));
+            if (secs !== this.lastTimerSecs) {
+                this.lastTimerSecs = secs;
+                this.timerBadge.label.setText(String(secs));
+            }
+            // Spawn is frozen, except for pieces needed to keep the target solvable
+            if (this.forceQueue && this.spawnQueue.length > 0) {
+                this.spawnTimer += delta;
+                if (this.spawnTimer >= this.spawnDelay) {
+                    this.spawnTimer = 0;
+                    this.spawnPiece();
+                }
+            }
+            if (this.timerRemaining <= 0) this.endTimerPowerUp();
+        } else if (!this.tutorial) {
+            this.spawnTimer += delta;
+            if (this.spawnTimer >= this.spawnDelay) {
+                this.spawnTimer = 0;
+                this.spawnPiece();
+            }
+        }
+
+        if (this.hintRemaining > 0) {
+            this.hintRemaining -= delta;
+            const secs = Math.max(0, Math.ceil(this.hintRemaining / 1000));
+            if (secs !== this.lastHintSecs) {
+                this.lastHintSecs = secs;
+                this.hintBadge.label.setText(String(secs));
+            }
+            this.hintRefresh -= delta;
+            if (this.hintRefresh <= 0) {
+                this.hintRefresh = 350;
+                this.hintPieces = this.findSolution(this.target, this.reachablePieces()) || [];
+            }
+            if (this.hintRemaining <= 0) this.endHintPowerUp();
+        }
+
+        this.dangerAcc += delta;
+        if (this.dangerAcc >= 100) {
+            this.checkDanger(this.dangerAcc);
+            this.dangerAcc = 0;
+        }
+
+        this.solveAcc += delta;
+        if (this.solveAcc >= 1000) {
+            this.solveAcc = 0;
+            this.ensureSolvable();
+        }
+    }
+
+    checkDanger(dt) {
+        let worst = 0;
+        let near = false;
+        for (const p of this.pieces) {
+            const top = p.body.position.y - R;
+            const settled = p.body.isSleeping || p.body.speed < 0.35;
+            if (settled && top < this.deathY + R) near = true;
+            if (settled && top < this.deathY) {
+                p.dangerMs += dt;
+                if (p.dangerMs > worst) worst = p.dangerMs;
+            } else {
+                p.dangerMs = 0;
+            }
+        }
+
+        if (near && !this.dangerTween) {
+            this.dangerLine.setAlpha(0.15);
+            this.vignette.setAlpha(0);
+            this.dangerTween = this.tweens.add({
+                targets: [this.dangerLine, this.vignette], alpha: 0.85, duration: 380, yoyo: true, repeat: -1,
+                ease: 'Sine.easeInOut'
+            });
+            this.music.setDanger(true);
+        } else if (!near && this.dangerTween) {
+            this.dangerTween.remove();
+            this.dangerTween = null;
+            this.dangerLine.setAlpha(0.15);
+            this.vignette.setAlpha(0);
+            this.music.setDanger(false);
+        }
+
+        if (worst > DANGER_MS && !this.tutorial) this.endGame();
+    }
+
+    // ------------------------------------------------------------------ pieces
+
+    randomPieceData() {
+        const rng = this.pieceRng;
+        const r = this.rand(rng);
+        let data;
+        if (r < 0.05) data = { type: 'special', special: 'bomb' };
+        else if (r < 0.08) data = { type: 'special', special: 'timer' };
+        else if (r < 0.11) data = { type: 'special', special: 'hint' };
+        else if (r < 0.14) data = { type: 'special', special: 'recycle' };
+        else if (r < 0.6) data = { type: 'number', value: this.randInt(rng, 1, 9) };
+        else data = { type: 'operator', value: this.pick(rng, this.allowedOps()) };
+        if (data.type !== 'special') data.iceRoll = this.rand(rng) < ICE_CHANCE;
+        data.fx = this.rand(rng);   // spawn column as a fraction of the width
+        return data;
+    }
+
+    // What spawnPiece() drops next: pending solvability pieces first, else the pre-rolled random one
+    peekNext() {
+        if (this.spawnQueue.length > 0) return this.spawnQueue[0];
+        if (!this.upcoming) this.upcoming = this.randomPieceData();
+        return this.upcoming;
+    }
+
+    spawnPiece() {
+        let data;
+        if (this.spawnQueue.length > 0) {
+            data = this.spawnQueue.shift();
+        } else {
+            data = this.upcoming || this.randomPieceData();
+            this.upcoming = null;
+        }
+        if (this.spawnQueue.length === 0) this.forceQueue = false;
+        const fx = data.fx !== undefined ? data.fx : Math.random();
+        const x = Math.round(R + 4 + fx * (this.w - 2 * R - 8));
+        const y = -R * 2 - Math.random() * R;
+        return this.createPiece(data, x, y);
+    }
+
+    createPiece(data, x, y) {
+        const color = data.type === 'number' ? COLORS.numbers[data.value % COLORS.numbers.length]
+            : data.type === 'operator' ? COLORS.operators[data.value]
+                : COLORS.specials[data.special];
+
+        const body = this.matter.add.circle(x, y, R, { ...PIECE_BODY, label: 'piece' });
+        this.Body.setVelocity(body, { x: Phaser.Math.FloatBetween(-1.2, 1.2), y: 3 });
+
+        const img = this.add.image(x, y, pieceTextureKey(data)).setDepth(10).setScale(INV);
+        const p = { ...data, color, body, img, ice: null, selected: false, slot: -1, alive: true, dangerMs: 0 };
+
+        if (data.type === 'special') {
+            this.tweens.add({
+                targets: img, scale: 1.08 * INV, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut'
+            });
+        } else if (!data.noIce && (data.iceRoll !== undefined ? data.iceRoll : Math.random() < ICE_CHANCE)
+            && this.textures.exists('ice')) {
+            // Ice cover fades in gradually: the label is readable at first, then hidden
+            p.ice = this.add.image(x, y, 'ice').setDepth(11).setAlpha(0).setScale(INV);
+            this.tweens.add({ targets: p.ice, alpha: 0.95, duration: ICE_FREEZE_MS, ease: 'Sine.easeIn' });
+        }
+
+        this.pieces.push(p);
+        return p;
+    }
+
+    removePiece(p) {
+        if (!p.alive) return;
+        p.alive = false;
+        this.matter.world.remove(p.body);
+        this.tweens.killTweensOf(p.img);
+        p.img.destroy();
+        if (p.ice) {
+            this.tweens.killTweensOf(p.ice);
+            p.ice.destroy();
+        }
+        const i = this.pieces.indexOf(p);
+        if (i !== -1) this.pieces.splice(i, 1);
+        // Sleeping bodies resting on a removed piece would float; wake the pile next frame
+        this.needsWake = true;
+    }
+
+    // ------------------------------------------------------------------ input & selection
+
+    onPointerDown(pointer) {
+        if (!this.gameStarted || this.gameOver || this.validating || this.paused) return;
+        // world coordinates: the camera is zoomed by RES (see display.js)
+        const x = pointer.worldX;
+        const y = pointer.worldY;
+
+        if (y < this.uiHeight) {
+            const half = this.slotSize / 2 + 6;
+            for (let i = 0; i < 3; i++) {
+                const pos = this.slotPos[i];
+                if (this.slots[i] && Math.abs(x - pos.x) < half && Math.abs(y - pos.y) < half) {
+                    this.playClick();
+                    this.deselect(i);
+                    return;
+                }
+            }
+            return;
+        }
+
+        let best = null;
+        let bestD = TAP_RADIUS_SQ;
+        for (const p of this.pieces) {
+            const dx = p.body.position.x - x;
+            const dy = p.body.position.y - y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = p;
+            }
+        }
+        if (best) this.selectPiece(best);
+    }
+
+    selectPiece(p) {
+        if (p.type === 'special') {
+            this.activateSpecial(p);
+            return;
+        }
+
+        // Interactive tutorial: only the highlighted piece reacts
+        if (this.tutorial && this.tutTarget && p !== this.tutTarget) {
+            this.tweens.add({ targets: p.img, scale: 0.88 * INV, duration: 70, yoyo: true });
+            return;
+        }
+
+        this.playClick();
+        if (p.ice && p.ice.alpha > 0.4) this.crackIce(p);
+
+        // Tapping a selected piece again deselects it
+        if (p.selected) {
+            this.deselect(p.slot);
+            return;
+        }
+
+        // Numbers fill the first free number slot (replacing the second one if both are taken);
+        // operators can be picked at any time and replace the current operator
+        const slot = p.type === 'operator' ? 1 : (!this.slots[0] ? 0 : 2);
+        if (this.slots[slot]) this.deselect(slot);
+
+        this.slots[slot] = p;
+        p.selected = true;
+        p.slot = slot;
+        this.flyToSlot(p, slot);
+        if (this.tutorial && p === this.tutTarget) this.tutorialStep(this.tutStep + 1);
+
+        if (this.slots[0] && this.slots[1] && this.slots[2]) {
+            this.validating = true;
+            this.time.delayedCall(260, () => this.validate());
+        }
+    }
+
+    flyToSlot(p, i) {
+        const dest = this.slotPos[i];
+        const img = this.add.image(p.img.x, p.img.y, p.img.texture.key).setDepth(150).setScale(INV);
+        const ice = p.ice ? this.add.image(p.img.x, p.img.y, 'ice').setDepth(151).setAlpha(p.ice.alpha).setScale(INV) : null;
+        this.slotDisplays[i] = { img, ice, piece: p };
+
+        const trail = this.trails[i];
+        trail.setParticleTint(p.color);
+        trail.startFollow(img);
+        trail.start();
+
+        this.tweens.add({
+            targets: ice ? [img, ice] : img,
+            x: dest.x,
+            y: dest.y,
+            scale: this.slotScale,
+            duration: 320,
+            ease: 'Back.easeOut',
+            onComplete: () => trail.stop()
+        });
+    }
+
+    deselect(i) {
+        const p = this.slots[i];
+        if (!p) return;
+        this.slots[i] = null;
+        p.selected = false;
+        p.slot = -1;
+
+        const d = this.slotDisplays[i];
+        this.slotDisplays[i] = null;
+        if (!d) return;
+
+        this.trails[i].stop();
+        const targets = d.ice ? [d.img, d.ice] : [d.img];
+        this.tweens.killTweensOf(targets);
+        const destroy = () => targets.forEach((t) => t.destroy());
+
+        if (p.alive) {
+            this.tweens.add({
+                targets,
+                x: p.img.x,
+                y: p.img.y,
+                scale: 0.4 * INV,
+                alpha: 0,
+                duration: 220,
+                ease: 'Cubic.easeIn',
+                onComplete: destroy
+            });
+        } else {
+            destroy();
+        }
+    }
+
+    validate() {
+        const [a, o, b] = this.slots;
+        if (!a || !o || !b) {
+            this.validating = false;
+            return;
+        }
+        if (calc(a.value, o.value, b.value) === this.target) this.onSuccess();
+        else this.onFail();
+    }
+
+    onSuccess() {
+        this.playSound('popSound', 0.8);
+        vibrate(15);
+        this.hitStop(70);
+        this.scoreSuccess();
+        this.cameras.main.flash(160, 40, 160, 90);
+
+        for (let i = 0; i < 3; i++) {
+            const p = this.slots[i];
+            const d = this.slotDisplays[i];
+            this.trails[i].stop();
+
+            if (d) {
+                const targets = d.ice ? [d.img, d.ice] : [d.img];
+                this.tweens.killTweensOf(targets);
+                this.burst.setParticleTint(p.color);
+                this.burst.emitParticleAt(d.img.x, d.img.y, 14);
+                this.starBurst.emitParticleAt(d.img.x, d.img.y, 4);
+                this.tweens.add({
+                    targets,
+                    scale: this.slotScale * 1.8,
+                    alpha: 0,
+                    duration: 300,
+                    delay: i * 60,
+                    ease: 'Back.easeOut',
+                    onComplete: () => targets.forEach((t) => t.destroy())
+                });
+            }
+
+            if (p) {
+                this.burst.setParticleTint(p.color);
+                this.burst.emitParticleAt(p.img.x, p.img.y, 10);
+                p.selected = false;
+                this.removePiece(p);
+            }
+        }
+
+        this.slots = [null, null, null];
+        this.slotDisplays = [null, null, null];
+        this.validating = false;
+        if (this.tutorial) {
+            this.finishTutorial();
+            return;
+        }
+        this.newTarget();
+        this.checkLevelUp();
+    }
+
+    onFail() {
+        this.playSound('dropSound', 0.8);
+        vibrate([40, 40, 40]);
+        this.cameras.main.shake(220, 0.012);
+        this.cameras.main.flash(140, 200, 50, 50);
+        this.combo = 0;
+        this.streak = 0;
+        this.addScore(-SCORING.failPenalty, this.targetX, this.eqY + this.slotSize * 0.6, 0xef4444);
+
+        for (let i = 0; i < 3; i++) this.deselect(i);
+        this.time.delayedCall(250, () => { this.validating = false; });
+    }
+
+    // ------------------------------------------------------------------ targets & solver
+
+    newTarget() {
+        const pool = this.reachablePieces();
+        const rng = this.targetRng;
+        let target = !this.daily && Math.random() < 0.7 ? this.targetFrom(pool) : null;
+        if (target === null) {
+            let r;
+            do {
+                r = calc(this.randInt(rng, 1, 9), this.pick(rng, this.allowedOps()), this.randInt(rng, 1, 9));
+            } while (r === null || r < 1);
+            target = r;
+        }
+        this.setTarget(target);
+        // Only the pieces the pile is missing for this target are queued (often none)
+        this.spawnQueue = this.missingPiecesFor(target, pool);
+        this.forceQueue = false;
+    }
+
+    setTarget(target) {
+        this.target = target;
+        this.targetText.setText(String(target));
+        this.tweens.killTweensOf(this.targetText);
+        this.targetText.setScale(0.6);
+        this.tweens.add({ targets: this.targetText, scale: 1, duration: 300, ease: 'Back.easeOut' });
+        if (this.hintRemaining > 0) this.hintRefresh = 0;
+    }
+
+    // Pieces the player can actually use: anything below the panel, or still falling into view.
+    // Pieces stuck behind the panel cannot be tapped.
+    reachablePieces() {
+        return this.pieces.filter((p) => p.body.position.y > this.uiHeight || p.body.speed > 0.5);
+    }
+
+    // Guarantees the current target can always be made. Pending queue items count as available.
+    // Called every second and right after anything destroys pieces (bomb, recycle).
+    ensureSolvable() {
+        if (this.gameOver || this.tutorial) return;
+        const pool = this.reachablePieces();
+        if (this.findSolution(this.target, pool.concat(this.spawnQueue))) return;
+
+        // While the timer power-up holds the spawn, prefer a new target the pile can already make
+        // (not in the daily: its target sequence is shared by everyone)
+        if (this.timerRemaining > 0 && !this.daily) {
+            const t = this.targetFrom(pool);
+            if (t !== null) {
+                this.setTarget(t);
+                this.spawnQueue = [];
+                return;
+            }
+        }
+
+        this.spawnQueue.unshift(...this.missingPiecesFor(this.target, pool));
+        // Rare case: frozen spawn and no target possible from the pile -> let the missing pieces through
+        if (this.timerRemaining > 0) this.forceQueue = true;
+    }
+
+    // Random target that the given pieces can make
+    targetFrom(pool) {
+        const nums = pool.filter((p) => p.type === 'number' && !p.selected);
+        const ops = [...new Set(pool.filter((p) => p.type === 'operator').map((p) => p.value))];
+        if (nums.length < 2 || ops.length === 0) return null;
+
+        for (let t = 0; t < 40; t++) {
+            const a = Phaser.Utils.Array.GetRandom(nums);
+            const b = Phaser.Utils.Array.GetRandom(nums);
+            if (a === b) continue;
+            const r = calc(a.value, Phaser.Utils.Array.GetRandom(ops), b.value);
+            if (r !== null && r >= 1) return r;
+        }
+        return null;
+    }
+
+    // Fewest pieces to add so the target becomes solvable with the given pool (shuffled, may be empty)
+    missingPiecesFor(target, pool) {
+        const numCount = {};
+        const ops = new Set();
+        for (const p of pool) {
+            if (p.type === 'number') numCount[p.value] = (numCount[p.value] || 0) + 1;
+            else if (p.type === 'operator') ops.add(p.value);
+        }
+
+        let best = null;
+        for (const op of this.allowedOps()) {
+            for (let a = 1; a <= 9; a++) {
+                for (let b = 1; b <= 9; b++) {
+                    if (calc(a, op, b) !== target) continue;
+                    const missing = [];
+                    if (a === b) {
+                        for (let k = numCount[a] || 0; k < 2; k++) missing.push({ type: 'number', value: a });
+                    } else {
+                        if (!numCount[a]) missing.push({ type: 'number', value: a });
+                        if (!numCount[b]) missing.push({ type: 'number', value: b });
+                    }
+                    if (!ops.has(op)) missing.push({ type: 'operator', value: op });
+                    if (!best || missing.length < best.length || (missing.length === best.length && Math.random() < 0.3)) {
+                        best = missing;
+                    }
+                }
+            }
+        }
+        return Phaser.Utils.Array.Shuffle(best || []);
+    }
+
+    // Works on live pieces and on queued piece data alike (both have type/value)
+    findSolution(target, pool) {
+        const nums = [];
+        const opPiece = {};
+        for (const p of pool) {
+            if (p.type === 'number') nums.push(p);
+            else if (p.type === 'operator' && (!opPiece[p.value] || p.selected)) opPiece[p.value] = p;
+        }
+        for (const op of Object.keys(opPiece)) {
+            for (const a of nums) {
+                for (const b of nums) {
+                    if (a !== b && calc(a.value, op, b.value) === target) return [a, opPiece[op], b];
+                }
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------ specials
+
+    activateSpecial(p) {
+        const { x, y } = p.body.position;
+        this.burst.setParticleTint(p.color);
+        this.burst.emitParticleAt(x, y, 12);
+        this.removePiece(p);
+
+        if (p.special === 'bomb') this.explode(x, y);
+        else if (p.special === 'timer') this.startTimerPowerUp();
+        else if (p.special === 'hint') this.startHintPowerUp();
+        else if (p.special === 'recycle') this.recycle(x, y);
+    }
+
+    explode(x, y) {
+        const radius = R * 3.2;
+        const pushRadius = radius * 2.2;
+        this.playSound('explosionSound', 0.9);
+        this.cameras.main.shake(320, 0.02);
+        vibrate(80);
+        this.hitStop(90);
+        this.sparks.emitParticleAt(x, y, 30);
+
+        const wave = this.add.image(x, y, 'ring').setTint(0xffaa33).setDepth(190).setScale(0.4 * INV);
+        this.tweens.add({
+            targets: wave, scale: (radius * 2) / TEX_PX * 1.2, alpha: 0, duration: 380, ease: 'Cubic.easeOut',
+            onComplete: () => wave.destroy()
+        });
+
+        let destroyed = 0;
+        for (const q of [...this.pieces]) {
+            if (q.selected) continue;
+            const dx = q.body.position.x - x;
+            const dy = q.body.position.y - y;
+            const d = Math.hypot(dx, dy) || 1;
+            if (d < radius) {
+                this.sparks.emitParticleAt(q.body.position.x, q.body.position.y, 8);
+                this.removePiece(q);
+                destroyed++;
+            } else if (d < pushRadius) {
+                const k = 9 * (1 - d / pushRadius);
+                this.Sleeping.set(q.body, false);
+                this.Body.setVelocity(q.body, {
+                    x: q.body.velocity.x + (dx / d) * k,
+                    y: q.body.velocity.y + (dy / d) * k - 2
+                });
+            }
+        }
+        if (destroyed > 0) this.addScore(destroyed * 10, x, y, 0xffaa33);
+        if (!this.tutorial) this.toastAchievements(report('bomb', { destroyed }));
+        this.ensureSolvable();
+    }
+
+    recycle(x, y) {
+        this.playSound('sparksSound', 0.7);
+        const candidates = this.pieces.filter((q) => !q.selected && Math.random() < 0.3).slice(0, 8);
+        if (candidates.length === 0) return;
+
+        const gfx = this.add.graphics().setDepth(1000);
+        for (const q of candidates) {
+            this.drawLightning(gfx, x, y, q.body.position.x, q.body.position.y);
+            this.sparks.emitParticleAt(q.body.position.x, q.body.position.y, 8);
+            this.removePiece(q);
+        }
+        this.tweens.add({ targets: gfx, alpha: 0, duration: 400, onComplete: () => gfx.destroy() });
+        this.cameras.main.shake(150, 0.005);
+        this.ensureSolvable();
+    }
+
+    startTimerPowerUp() {
+        this.playSound('timeSound', 0.8);
+        this.timerRemaining = TIMER_POWERUP_MS;
+        this.lastTimerSecs = -1;
+        this.timerBadge.setVisible(true);
+        this.tweens.killTweensOf(this.timerOverlay);
+        this.tweens.add({ targets: this.timerOverlay, alpha: 0.1, duration: 400 });
+    }
+
+    endTimerPowerUp() {
+        this.timerRemaining = 0;
+        this.spawnTimer = 0;
+        this.timerBadge.setVisible(false);
+        this.tweens.killTweensOf(this.timerOverlay);
+        this.tweens.add({ targets: this.timerOverlay, alpha: 0, duration: 400 });
+    }
+
+    startHintPowerUp() {
+        this.playSound('bonusSound', 0.7);
+        this.hintRemaining = HINT_POWERUP_MS;
+        this.lastHintSecs = -1;
+        this.hintRefresh = 0;
+        this.hintBadge.setVisible(true);
+    }
+
+    endHintPowerUp() {
+        this.hintRemaining = 0;
+        this.hintPieces = [];
+        this.hintBadge.setVisible(false);
+    }
+
+    drawLightning(graphics, x1, y1, x2, y2) {
+        const distance = Phaser.Math.Distance.Between(x1, y1, x2, y2);
+        if (distance < 1) return;
+
+        const steps = Math.ceil(distance / 10);
+        const angle = Phaser.Math.Angle.Between(x1, y1, x2, y2) + Math.PI / 2;
+        const points = [{ x: x1, y: y1 }];
+        for (let i = 1; i < steps; i++) {
+            const t = i / steps;
+            const offset = (Math.random() - 0.5) * 20;
+            points.push({
+                x: x1 + (x2 - x1) * t + Math.cos(angle) * offset,
+                y: y1 + (y2 - y1) * t + Math.sin(angle) * offset
+            });
+        }
+        points.push({ x: x2, y: y2 });
+
+        [[6, 0x00FFFF, 0.4], [3, 0xFFFF00, 0.8], [1.5, 0xFFFFFF, 1]].forEach(([width, color, alpha]) => {
+            graphics.lineStyle(width, color, alpha);
+            graphics.beginPath();
+            graphics.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) graphics.lineTo(points[i].x, points[i].y);
+            graphics.strokePath();
+        });
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    playClick() {
+        this.playSound('clickbutton', 0.6);
+    }
+
+    playSound(key, volume) {
+        if (settings.get('sfx') && this.cache.audio.exists(key)) this.sound.play(key, { volume });
+    }
+
+    // A tiny physics freeze on big impacts makes them land harder
+    hitStop(ms) {
+        if (this.paused || this.gameOver) return;
+        this.matter.world.pause();
+        // scene clock: follows the game loop and waits while paused
+        this.time.delayedCall(ms, () => {
+            if (!this.paused && !this.gameOver) this.matter.world.resume();
+        });
+    }
+
+    addScore(amount, x, y, color) {
+        this.score = Math.max(0, this.score + amount);
+        this.scoreText.setText(String(this.score));
+        this.tweens.add({ targets: this.scoreText, scale: 1.25, duration: 120, yoyo: true });
+        this.createFloatingText(x, y, (amount > 0 ? '+' : '') + amount, color);
+    }
+
+    createFloatingText(x, y, message, color) {
+        const colorStr = '#' + color.toString(16).padStart(6, '0');
+        const t = this.add.text(x, y, message, {
+            fontFamily: 'Righteous', fontSize: '28px', color: colorStr,
+            stroke: '#000000', strokeThickness: 4
+        }).setOrigin(0.5).setDepth(200).setScale(0.5);
+
+        this.tweens.add({
+            targets: t,
+            y: y + 50,
+            scale: 1.2,
+            alpha: 0,
+            duration: 900,
+            ease: 'Cubic.easeOut',
+            onComplete: () => t.destroy()
+        });
+    }
+
+    // ------------------------------------------------------------------ pause
+
+    pauseGame() {
+        if (this.paused || this.gameOver || !this.gameStarted) return;
+        this.paused = true;
+        this.matter.world.pause();
+        // Pause only the running tweens: in Phaser 3.60 tweens.pauseAll() would also freeze the
+        // pause menu and countdown tweens created afterwards (and survive a scene restart)
+        this.frozenTweens = this.tweens.getTweens().filter((tw) => !tw.paused);
+        this.frozenTweens.forEach((tw) => tw.pause());
+        this.time.paused = true;
+        this.sound.pauseAll();
+        this.music.pause();
+        this.showPauseMenu();
+    }
+
+    showPauseMenu() {
+        const m = modal(this, { depth: 700, height: 400, title: t('paused') });
+        this.pauseUI = m;
+        const { panel } = m;
+        const bw = Math.min(240, panel.w - 48);
+        const opts = { width: bw, height: 56, fontSize: 24, depth: m.depth, enter: false };
+        // Resume first and biggest: it is what players want most of the time
+        m.add(chunkyButton(this, panel.cx, panel.y + 112, t('resume'), 0x22c55e, () => this.resumeGame(), opts));
+        m.add(chunkyButton(this, panel.cx, panel.y + 184, t('settings'), 0x6366f1, () => {
+            openSettings(this, {
+                depth: 760,
+                onClose: (langChanged) => {
+                    if (!langChanged) return;
+                    this.closePauseMenu();
+                    this.buildHud();
+                    this.showPauseMenu();
+                }
+            });
+        }, opts));
+        m.add(chunkyButton(this, panel.cx, panel.y + 256, t('restart'), 0xf59e0b, () => this.scene.restart({ tutorial: this.tutorial, daily: this.daily }), opts));
+        m.add(chunkyButton(this, panel.cx, panel.y + 328, t('menu'), 0x8b5cf6, () => this.scene.start('MenuScene'), opts));
+    }
+
+    closePauseMenu() {
+        if (this.pauseUI) this.pauseUI.close();
+        this.pauseUI = null;
+    }
+
+    // 3-2-1 before play resumes, so the player is not caught off guard
+    resumeGame() {
+        this.closePauseMenu();
+        this.countdown(() => {
+            this.paused = false;
+            this.time.paused = false;
+            (this.frozenTweens || []).forEach((tw) => tw.resume());
+            this.frozenTweens = null;
+            this.sound.resumeAll();
+            this.matter.world.resume();
+            this.music.resume();
+        });
+    }
+
+    // Big 3, 2, 1 (and GO! at the start of a game). Runs on tweens, which keep going while paused.
+    countdown(onDone, withGo = false) {
+        const label = this.add.text(this.w / 2, this.h / 2, '', {
+            fontFamily: 'Righteous', fontSize: '96px', color: '#ffd23f',
+            stroke: '#1b0f2e', strokeThickness: 10
+        }).setOrigin(0.5).setDepth(650);
+        const seq = withGo ? ['3', '2', '1', t('go')] : ['3', '2', '1'];
+
+        const step = (i) => {
+            if (i >= seq.length) {
+                label.destroy();
+                onDone();
+                return;
+            }
+            const isGo = i === 3;
+            label.setText(seq[i]).setScale(isGo ? 0.6 : 1.6).setAlpha(1).setColor(isGo ? '#4ade80' : '#ffd23f');
+            if (settings.get('sfx') && this.cache.audio.exists(isGo ? 'bonusSound' : 'clickbutton')) {
+                this.sound.play(isGo ? 'bonusSound' : 'clickbutton', { volume: 0.5, detune: isGo ? 0 : i * 200 });
+            }
+            this.tweens.add({
+                targets: label,
+                scale: isGo ? 1.3 : 1,
+                alpha: isGo ? 0 : 0.2,
+                duration: isGo ? 520 : 380,
+                ease: isGo ? 'Back.easeOut' : 'Cubic.easeOut',
+                onComplete: () => step(i + 1)
+            });
+        };
+        step(0);
+    }
+
+    // ------------------------------------------------------------------ resize
+
+    // Mobile browsers resize the page when the address bar shows/hides; rotation also lands here.
+    // The pile moves with the floor so nothing floats or disappears.
+    onResize(gameSize) {
+        const w = Math.round(gameSize.width / RES);
+        const h = Math.round(gameSize.height / RES);
+        if (!w || !h || (w === this.w && h === this.h)) return;
+        const dh = h - this.h;
+        this.w = w;
+        this.h = h;
+
+        this.matter.world.setBounds(0, -h, w, h * 2, 200, true, true, false, true);
+        for (const p of this.pieces) {
+            const pos = p.body.position;
+            this.Body.setPosition(p.body, { x: Phaser.Math.Clamp(pos.x, R + 1, w - R - 1), y: pos.y + dh });
+            this.Sleeping.set(p.body, false);
+        }
+        if (this.bg) this.bg.setDisplaySize(w, h);
+
+        clearTimeout(this.hudTimer);
+        this.hudTimer = setTimeout(() => {
+            if (!this.sys.isActive() && !this.paused) return;
+            this.buildHud();
+            if (this.pauseUI) {
+                this.closePauseMenu();
+                this.showPauseMenu();
+            }
+        }, 120);
+    }
+
+    // ------------------------------------------------------------------ feel
+
+    onImpact(event) {
+        if (!settings.get('sfx') || !this.cache.audio.exists('impactSound')) return;
+        const now = performance.now();
+        if (now - this.lastImpactAt < 70) return;
+        for (const pair of event.pairs) {
+            const a = pair.bodyA.velocity;
+            const b = pair.bodyB.velocity;
+            const speed = Math.abs(a.y - b.y) + Math.abs(a.x - b.x) * 0.5;
+            if (speed > 3.5) {
+                this.lastImpactAt = now;
+                this.sound.play('impactSound', {
+                    volume: Math.min(0.32, 0.05 + speed * 0.022),
+                    detune: Phaser.Math.Between(-250, 150)
+                });
+                return;
+            }
+        }
+    }
+
+    // Tapping a frozen piece cracks the ice for a moment so the player can peek at it
+    crackIce(p) {
+        const ice = p.ice;
+        this.tweens.killTweensOf(ice);
+        this.burst.setParticleTint(0xbfe9ff);
+        this.burst.emitParticleAt(p.img.x, p.img.y, 8);
+        if (settings.get('sfx') && this.cache.audio.exists('clickbutton')) {
+            this.sound.play('clickbutton', { volume: 0.4, detune: 900 });
+        }
+        this.tweens.add({ targets: ice, alpha: 0.15, duration: 120, ease: 'Cubic.easeOut' });
+        this.tweens.add({ targets: ice, alpha: 0.95, duration: 900, delay: 820, ease: 'Sine.easeIn' });
+    }
+
+    // ------------------------------------------------------------------ achievements
+
+    toastAchievements(list) {
+        if (!list || list.length === 0) return;
+        this.toastQueue.push(...list);
+        if (!this.toasting) this.nextToast();
+    }
+
+    // Banner that slides down from under the HUD (above everything, game over included)
+    nextToast() {
+        const a = this.toastQueue.shift();
+        if (!a) {
+            this.toasting = false;
+            return;
+        }
+        this.toasting = true;
+        const [title] = achievementText(a);
+        const bw = Math.min(this.w - 24, 330);
+        const bh = 62;
+        const x = this.w / 2 - bw / 2;
+        const y = this.uiTop + 14;
+
+        const box = this.add.container(0, -bh - y - 20).setDepth(900);
+        const g = this.add.graphics();
+        g.fillStyle(0x000000, 0.4);
+        g.fillRoundedRect(x + 3, y + 5, bw, bh, 18);
+        g.fillStyle(0x2a1c52, 1);
+        g.fillRoundedRect(x, y, bw, bh, 18);
+        g.lineStyle(3, 0x140a24, 1);
+        g.strokeRoundedRect(x, y, bw, bh, 18);
+        g.lineStyle(2, 0xffd23f, 0.9);
+        g.strokeRoundedRect(x + 4, y + 4, bw - 8, bh - 8, 14);
+        const medal = drawMedal(this, x + 34, y + bh / 2, 20, a, true, 900);
+        const head = this.add.text(x + 64, y + 18, t('achievementUnlocked'), {
+            fontFamily: 'Righteous', fontSize: '12px', color: '#ffd23f', letterSpacing: 2
+        }).setOrigin(0, 0.5);
+        const name = this.add.text(x + 64, y + 40, title, {
+            fontFamily: 'Righteous', fontSize: '19px', color: '#ffffff'
+        }).setOrigin(0, 0.5);
+        box.add([g, ...medal, head, name]);
+
+        if (settings.get('sfx') && this.cache.audio.exists('bonusSound')) {
+            this.sound.play('bonusSound', { volume: 0.6, detune: 300 });
+        }
+        vibrate([20, 30, 20]);
+        this.tweens.add({ targets: box, y: 0, duration: 380, ease: 'Back.easeOut' });
+        this.tweens.add({
+            targets: box, y: -bh - y - 20, alpha: 0, delay: 2400, duration: 300, ease: 'Cubic.easeIn',
+            onComplete: () => {
+                box.destroy();
+                this.nextToast();
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ levels & scoring
+
+    allowedOps() {
+        return this.tutorial || this.daily ? OPS : LEVELS.ops(this.level);
+    }
+
+    // Random helpers that use a seeded stream in the daily challenge, Math.random otherwise
+    rand(rng) {
+        return rng ? rng.frac() : Math.random();
+    }
+
+    randInt(rng, a, b) {
+        return a + Math.floor(this.rand(rng) * (b - a + 1));
+    }
+
+    pick(rng, arr) {
+        return arr[Math.floor(this.rand(rng) * arr.length)];
+    }
+
+    // Points by operator and level, times the combo multiplier, plus a bonus per frozen piece used
+    scoreSuccess() {
+        const now = this.time.now;
+        this.combo = now - this.lastSuccessAt <= SCORING.comboWindow ? this.combo + 1 : 1;
+        this.lastSuccessAt = now;
+        this.bestCombo = Math.max(this.bestCombo, this.combo);
+        this.solved++;
+
+        const op = this.slots[1].value;
+        const mult = Math.min(SCORING.comboMax, 1 + (this.combo - 1) * SCORING.comboStep);
+        const iced = this.slots.filter((p) => p && p.ice && p.ice.alpha > 0.3).length;
+        const base = Math.round(SCORING.base[op] * (1 + (this.level - 1) * SCORING.levelBonus));
+        const points = Math.round(base * mult) + iced * SCORING.iceBonus;
+
+        this.addScore(points, this.targetX, this.eqY + this.slotSize * 0.6, 0x4ade80);
+        if (this.combo >= 2) this.showCombo(mult);
+        this.updateLevelHud();
+
+        this.streak++;
+        if (!this.tutorial) {
+            this.toastAchievements(report('solve', {
+                op, combo: this.combo, level: this.level, score: this.score, iced, streak: this.streak
+            }));
+        }
+    }
+
+    showCombo(mult) {
+        const tiers = ['#4ade80', '#38bdf8', '#a855f7', '#f59e0b', '#ef4444'];
+        const color = tiers[Math.min(tiers.length - 1, this.combo - 2)];
+        const y = this.uiHeight + 70;
+        const label = this.add.text(this.w / 2, y, `${t('combo')} x${mult}`, {
+            fontFamily: 'Righteous', fontSize: `${30 + Math.min(5, this.combo) * 4}px`, color,
+            stroke: '#1b0f2e', strokeThickness: 7
+        }).setOrigin(0.5).setDepth(210).setScale(0.3);
+        this.tweens.add({ targets: label, scale: 1, duration: 260, ease: 'Back.easeOut' });
+        this.tweens.add({
+            targets: label, alpha: 0, y: y - 34, delay: 650, duration: 350,
+            onComplete: () => label.destroy()
+        });
+        this.starBurst.emitParticleAt(this.w / 2, y, 6 + this.combo * 2);
+        if (settings.get('sfx') && this.cache.audio.exists('bonusSound')) {
+            this.sound.play('bonusSound', { volume: 0.45, detune: Math.min(6, this.combo - 2) * 150 });
+        }
+    }
+
+    checkLevelUp() {
+        if (this.solved % LEVELS.EQUATIONS_PER_LEVEL !== 0) return;
+        const before = LEVELS.ops(this.level);
+        this.level++;
+        this.spawnDelay = LEVELS.spawnDelay(this.level);
+        const newOp = this.daily ? null : LEVELS.ops(this.level).find((op) => !before.includes(op));
+        this.showLevelUp(newOp);
+        this.updateLevelHud();
+        this.music.setLevel(this.level);
+        this.toastAchievements(report('level', { level: this.level }));
+    }
+
+    showLevelUp(newOp) {
+        this.playSound('bonusSound', 0.8);
+        vibrate([20, 40, 20]);
+        const cy = this.h * 0.42;
+        const title = this.add.text(this.w / 2, cy, t('levelUp', { n: this.level }), {
+            fontFamily: 'Righteous', fontSize: '52px', color: '#ffd23f',
+            stroke: '#1b0f2e', strokeThickness: 9,
+            shadow: { offsetX: 0, offsetY: 6, color: '#7b2cbf', blur: 0, fill: true, stroke: true }
+        }).setOrigin(0.5).setDepth(220).setScale(0.2).setAlpha(0);
+        const subText = newOp ? t('unlocked', { op: newOp === '-' ? '−' : newOp }) : t('faster');
+        const sub = this.add.text(this.w / 2, cy + 50, subText, {
+            fontFamily: 'Righteous', fontSize: '22px', color: '#ffffff',
+            stroke: '#1b0f2e', strokeThickness: 6
+        }).setOrigin(0.5).setDepth(220).setAlpha(0);
+
+        this.tweens.add({ targets: title, scale: 1, alpha: 1, duration: 420, ease: 'Back.easeOut' });
+        this.tweens.add({ targets: sub, alpha: 1, duration: 300, delay: 200 });
+        this.tweens.add({
+            targets: [title, sub], alpha: 0, y: '-=40', delay: 1400, duration: 400,
+            onComplete: () => { title.destroy(); sub.destroy(); }
+        });
+        this.starBurst.emitParticleAt(this.w / 2, cy, 24);
+        this.cameras.main.flash(180, 255, 210, 63);
+    }
+
+    updateLevelHud() {
+        if (!this.levelText) return;
+        if (this.daily) {
+            const secs = Math.max(0, Math.ceil(this.dailyRemaining / 1000));
+            this.levelText.setText(`⏱ ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`)
+                .setColor(secs <= 10 ? '#ff5e5b' : '#ffd23f');
+        } else {
+            this.levelText.setText(this.tutorial ? '' : `${t('levelShort')} ${this.level}`);
+        }
+        const g = this.levelBar;
+        g.clear();
+        if (this.tutorial) return;
+        const x = 24;
+        const w = this.w - 48;
+        const y = this.uiHeight - 11;
+        g.fillStyle(0x2a1c52, 1);
+        g.fillRoundedRect(x, y, w, 5, 2.5);
+        const progress = (this.solved % LEVELS.EQUATIONS_PER_LEVEL) / LEVELS.EQUATIONS_PER_LEVEL;
+        if (progress > 0) {
+            g.fillStyle(0xffd23f, 1);
+            g.fillRoundedRect(x, y, Math.max(5, w * progress), 5, 2.5);
+        }
+    }
+
+    // ------------------------------------------------------------------ interactive tutorial
+
+    startTutorial() {
+        this.setTarget(8);
+        this.spawnQueue = [];
+        const plan = [
+            [{ type: 'number', value: 3 }, 0.22],
+            [{ type: 'operator', value: '+' }, 0.5],
+            [{ type: 'number', value: 5 }, 0.78],
+            [{ type: 'number', value: 2 }, 0.36],
+            [{ type: 'operator', value: '×' }, 0.64]
+        ];
+        plan.forEach(([data, fx], i) => {
+            this.time.delayedCall(i * 160, () => {
+                this.tutPieces.push(this.createPiece({ ...data, noIce: true }, Math.round(fx * this.w), -R * 2));
+            });
+        });
+        this.time.delayedCall(1700, () => this.tutorialStep(0));
+    }
+
+    tutorialStep(i) {
+        const keys = ['tut1', 'tut2', 'tut3'];
+        this.tutStep = i;
+        if (i >= keys.length) {
+            this.tutTarget = null;
+            this.hintPieces = [];
+            this.showTutBubble(null);
+            return;
+        }
+        this.tutTarget = this.tutPieces[i];
+        this.hintPieces = [this.tutTarget];
+        this.showTutBubble(t(keys[i]));
+    }
+
+    showTutBubble(text) {
+        if (this.tutBubble) this.tutBubble.forEach((o) => o.destroy());
+        this.tutBubble = null;
+        if (!text) return;
+
+        const y = this.uiHeight + 80;
+        const label = this.add.text(this.w / 2, y, text, {
+            fontFamily: 'Righteous', fontSize: '24px', color: '#ffffff',
+            stroke: '#1b0f2e', strokeThickness: 6
+        }).setOrigin(0.5).setDepth(171);
+        const bw = Math.min(this.w - 32, label.width + 48);
+        const bh = 58;
+        const x = this.w / 2 - bw / 2;
+        const g = this.add.graphics().setDepth(170);
+        g.fillStyle(0x000000, 0.35);
+        g.fillRoundedRect(x + 3, y - bh / 2 + 5, bw, bh, 18);
+        g.fillStyle(0x2a1c52, 1);
+        g.fillRoundedRect(x, y - bh / 2, bw, bh, 18);
+        g.lineStyle(3, 0x140a24, 1);
+        g.strokeRoundedRect(x, y - bh / 2, bw, bh, 18);
+        g.lineStyle(2, 0xffd23f, 0.8);
+        g.strokeRoundedRect(x + 4, y - bh / 2 + 4, bw - 8, bh - 8, 14);
+
+        label.setScale(0.6);
+        g.setAlpha(0);
+        this.tweens.add({ targets: label, scale: 1, duration: 260, ease: 'Back.easeOut' });
+        this.tweens.add({ targets: g, alpha: 1, duration: 180 });
+        this.tutBubble = [g, label];
+    }
+
+    finishTutorial() {
+        settings.set('tutorialDone', true);
+        this.tutTarget = null;
+        this.hintPieces = [];
+        this.showTutBubble(null);
+
+        this.time.delayedCall(700, () => {
+            const m = modal(this, { depth: 600, height: 470, title: t('tutDoneTitle') });
+            const { panel } = m;
+            let y = panel.y + 84;
+            t('tutDone').forEach((line) => {
+                m.add(this.add.text(panel.cx, y, line, {
+                    fontFamily: 'Roboto', fontSize: '17px', color: '#e5e3ff'
+                }).setOrigin(0.5).setDepth(m.depth));
+                y += 24;
+            });
+            y += 16;
+            const specials = t('specials');
+            const rows = [
+                ['piece_special_bomb', specials.bomb],
+                ['piece_special_timer', specials.timer],
+                ['piece_special_hint', specials.hint],
+                ['piece_special_recycle', specials.recycle],
+                ['piece_num_7', specials.ice, true]
+            ];
+            const left = panel.x + 26;
+            rows.forEach(([key, text, iced]) => {
+                m.add(this.add.image(left + 16, y, key).setScale(32 / TEX_PX).setDepth(m.depth));
+                if (iced && this.textures.exists('ice')) {
+                    m.add(this.add.image(left + 16, y, 'ice').setScale(32 / TEX_PX).setAlpha(0.7).setDepth(m.depth));
+                }
+                m.add(this.add.text(left + 42, y, text, {
+                    fontFamily: 'Roboto', fontSize: '14px', color: '#d6d4f5', wordWrap: { width: panel.w - 80 }
+                }).setOrigin(0, 0.5).setDepth(m.depth));
+                y += 40;
+            });
+            m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 48, t('letsPlay'), 0x22c55e,
+                () => this.scene.restart({ tutorial: false }),
+                { width: Math.min(220, panel.w - 48), height: 56, fontSize: 26, depth: m.depth, delay: 200 }));
+        });
+    }
+
+    // ------------------------------------------------------------------ game over
+
+    endGame(reason) {
+        if (this.gameOver) return;
+        this.gameOver = true;
+        this.endReason = reason;
+        this.matter.world.pause();
+        this.music.stop();
+        vibrate([100, 60, 200]);
+
+        const result = this.daily
+            ? daily.record(this.dailyKey, this.score)
+            : stats.record({ score: this.score, equations: this.solved, bestCombo: this.bestCombo, level: this.level });
+        this.toastAchievements(report('gameOver', { score: this.score, level: this.level, daily: !!this.daily }));
+
+        this.gameOverCascade(() => this.showGameOverPanel(result));
+    }
+
+    // The pile pops piece by piece, top to bottom, before the results appear
+    gameOverCascade(done) {
+        for (let i = 0; i < 3; i++) this.deselect(i);
+        this.hintPieces = [];
+        const list = [...this.pieces].sort((a, b) => a.body.position.y - b.body.position.y);
+        const stepMs = Math.max(12, Math.min(28, 900 / Math.max(1, list.length)));
+        this.cameras.main.shake(400, 0.006);
+        list.forEach((p, i) => {
+            this.time.delayedCall(i * stepMs, () => {
+                if (!p.img.active) return;
+                this.burst.setParticleTint(p.color);
+                this.burst.emitParticleAt(p.img.x, p.img.y, 6);
+                if (i % 5 === 0) this.playSound('popSound', 0.25);
+                // kill the ice freeze tween too, or it keeps pushing the ice alpha back up
+                const targets = p.ice ? [p.img, p.ice] : [p.img];
+                this.tweens.killTweensOf(targets);
+                this.tweens.add({ targets, scale: 1.25 * INV, alpha: 0, duration: 160, ease: 'Cubic.easeOut' });
+            });
+        });
+        this.time.delayedCall(list.length * stepMs + 250, done);
+    }
+
+    showGameOverPanel(result) {
+        const m = modal(this, { depth: 500, height: 440 });
+        const { panel } = m;
+
+        const title = m.add(this.add.text(panel.cx, panel.y + 50, this.endReason === 'time' ? t('timeUp') : t('gameOver'), {
+            fontFamily: 'Righteous', fontSize: '42px', color: '#ffffff',
+            stroke: '#1b0f2e', strokeThickness: 8,
+            shadow: { offsetX: 0, offsetY: 0, color: '#ef4444', blur: 18, fill: true }
+        }).setOrigin(0.5).setDepth(m.depth).setScale(2).setAlpha(0));
+        this.tweens.add({ targets: title, alpha: 1, scale: 1, duration: 450, delay: 150, ease: 'Back.easeOut' });
+
+        const label = m.add(this.add.text(panel.cx, panel.y + 104, t('finalScore'), {
+            fontFamily: 'Righteous', fontSize: '15px', color: '#a5a8ff', letterSpacing: 3
+        }).setOrigin(0.5).setDepth(m.depth).setAlpha(0));
+        const scoreText = m.add(this.add.text(panel.cx, panel.y + 152, '0', {
+            fontFamily: 'Righteous', fontSize: '60px', color: '#FFB347',
+            stroke: '#3b1d00', strokeThickness: 6,
+            shadow: { offsetX: 0, offsetY: 0, color: '#FF8C00', blur: 14, fill: true }
+        }).setOrigin(0.5).setDepth(m.depth).setAlpha(0));
+        this.tweens.add({ targets: [label, scoreText], alpha: 1, duration: 300, delay: 450 });
+
+        const counter = { v: 0 };
+        this.tweens.add({
+            targets: counter, v: this.score, duration: 900, delay: 500, ease: 'Cubic.easeOut',
+            onUpdate: () => scoreText.setText(String(Math.round(counter.v)))
+        });
+
+        // Record line: celebration for a new best, otherwise the best to beat
+        const bestLabel = this.daily ? t('dailyBest') : t('best');
+        const recordText = result.isRecord ? `🏆 ${t('newRecord')}` : `${bestLabel}: ${result.best}`;
+        const record = m.add(this.add.text(panel.cx, panel.y + 206, recordText, {
+            fontFamily: 'Righteous', fontSize: result.isRecord ? '24px' : '17px',
+            color: result.isRecord ? '#ffd23f' : '#8b8bc4',
+            stroke: '#1b0f2e', strokeThickness: result.isRecord ? 6 : 0
+        }).setOrigin(0.5).setDepth(m.depth).setAlpha(0));
+        this.tweens.add({ targets: record, alpha: 1, duration: 300, delay: 1400 });
+        if (result.isRecord) {
+            this.tweens.add({ targets: record, scale: 1.12, duration: 420, yoyo: true, repeat: -1, delay: 1400, ease: 'Sine.easeInOut' });
+            this.time.delayedCall(1400, () => this.celebrate());
+        }
+
+        const bestMult = this.bestCombo >= 2 ? Math.min(SCORING.comboMax, 1 + (this.bestCombo - 1) * SCORING.comboStep) : 1;
+        const line = m.add(this.add.text(panel.cx, panel.y + 240, `${t('level')} ${this.level}   ·   ${t('combo')} x${bestMult}`, {
+            fontFamily: 'Roboto', fontSize: '15px', color: '#c9c7ee'
+        }).setOrigin(0.5).setDepth(m.depth).setAlpha(0));
+        this.tweens.add({ targets: line, alpha: 1, duration: 300, delay: 1500 });
+
+        const bw = Math.min(240, panel.w - 48);
+        m.add(chunkyButton(this, panel.cx, panel.y + 304, t('restart'), 0x22c55e, () => this.scene.restart({ daily: this.daily }),
+            { width: bw, height: 58, fontSize: 26, depth: m.depth, delay: 900 }));
+        m.add(chunkyButton(this, panel.cx, panel.y + 374, t('menu'), 0x8b5cf6, () => this.scene.start('MenuScene'),
+            { width: bw, height: 50, fontSize: 22, depth: m.depth, delay: 1050 }));
+    }
+
+    celebrate() {
+        this.playSound('bonusSound', 0.9);
+        vibrate([30, 30, 30, 30, 60]);
+        const confetti = this.add.particles(0, -20, 'confetti', {
+            x: { min: 0, max: this.w },
+            speedY: { min: 120, max: 320 },
+            speedX: { min: -90, max: 90 },
+            rotate: { min: 0, max: 360 },
+            scale: { min: 0.6, max: 1.1 },
+            lifespan: 3200,
+            gravityY: 160,
+            tint: [0xffd23f, 0xff5e5b, 0x38bdf8, 0x4ade80, 0xa855f7, 0xff8a1f],
+            quantity: 3,
+            frequency: 40,
+            duration: 1600
+        }).setDepth(560);
+        this.time.delayedCall(5200, () => confetti.destroy());
+    }
+}

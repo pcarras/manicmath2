@@ -1,0 +1,255 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Righteous&family=Roboto:wght@400;700&family=Press+Start+2P&display=swap');
+
+:root {
+    /* read by the game to keep the HUD clear of notches / status bars */
+    --safe-top: env(safe-area-inset-top, 0px);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent; /* Remove blue highlight on tap */
+}
+
+body {
+    background: #05060f;
+    overflow: hidden;
+    touch-action: none;
+    font-family: 'Roboto', system-ui, sans-serif;
+    color: white;
+    user-select: none; /* Prevent text selection */
+    -webkit-user-select: none;
+}
+
+#game-container {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+
+/* Enhancements for Fullscreen PWA experience */
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* ------------------------------------------------------------------ Bica Games overlays */
+
+.bica {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at 50% 38%, #2a0f4a 0%, #12052a 55%, #07020f 100%);
+    overflow: hidden;
+    font-family: 'Press Start 2P', monospace;
+    color: #f4efe6;
+    cursor: pointer;
+}
+
+/* CRT scanlines + vignette on top of everything */
+.bica::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px),
+        radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.65) 100%);
+}
+
+.bica__screen {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 24px 16px;
+}
+
+.bica.crt-on .bica__screen { animation: bica-crt-on 0.5s ease-out both; }
+.bica.crt-off .bica__screen { animation: bica-crt-off 0.35s ease-in both; }
+
+@keyframes bica-crt-on {
+    0% { transform: scale(0.2, 0.004); filter: brightness(6); }
+    45% { transform: scale(1, 0.004); filter: brightness(4); }
+    100% { transform: scale(1, 1); filter: brightness(1); }
+}
+
+@keyframes bica-crt-off {
+    0% { transform: scale(1, 1); filter: brightness(1); opacity: 1; }
+    60% { transform: scale(1, 0.004); filter: brightness(5); opacity: 1; }
+    100% { transform: scale(0, 0.004); filter: brightness(8); opacity: 0; }
+}
+
+.bica canvas.bica__art {
+    width: min(66vw, 320px, 40vh);
+    height: auto;
+    /* dissolve the scene's square edges into the background */
+    -webkit-mask-image: radial-gradient(ellipse 72% 70% at 50% 52%, #000 70%, transparent 100%);
+    mask-image: radial-gradient(ellipse 72% 70% at 50% 52%, #000 70%, transparent 100%);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+.bica__header {
+    font-size: clamp(10px, 3.4vw, 14px);
+    color: #ff5e5b;
+    letter-spacing: 0.15em;
+    min-height: 1.2em;
+    animation: bica-blink 0.8s steps(2) infinite;
+}
+
+.bica__title {
+    display: flex;
+    gap: 0.06em;
+    font-size: clamp(36px, 13vw, 68px);
+    line-height: 1.1;
+}
+
+/* 80s chrome lettering: sunset gradient + a white shine band that sweeps across */
+.bica__title span {
+    display: inline-block;
+    color: transparent;
+    background-image:
+        linear-gradient(110deg, transparent 38%, rgba(255, 255, 255, 0.95) 50%, transparent 62%),
+        linear-gradient(180deg, #ffffff 0%, #fff1b8 26%, #ffb238 47%, #ff5e5b 53%, #c2185b 76%, #ffd23f 100%);
+    background-size: 300% 100%, 100% 100%;
+    background-position: 160% 0, 0 0;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 0.05em 0 #3b0a45) drop-shadow(0 0.1em 0 #1b0428) drop-shadow(0 0 0.22em rgba(255, 47, 168, 0.6));
+    opacity: 0;
+}
+
+.bica__title span.in {
+    opacity: 1;
+    animation: bica-drop 0.55s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+
+.bica__title.shine span.in {
+    animation: bica-shine 1.1s ease-in-out both;
+}
+
+.bica__title.shine span:nth-child(2) { animation-delay: 0.06s; }
+.bica__title.shine span:nth-child(3) { animation-delay: 0.12s; }
+.bica__title.shine span:nth-child(4) { animation-delay: 0.18s; }
+.bica__title.shine span:nth-child(5) { animation-delay: 0.24s; }
+
+@keyframes bica-shine {
+    from { background-position: 160% 0, 0 0; }
+    to { background-position: -70% 0, 0 0; }
+}
+
+.bica__title--small { font-size: clamp(18px, 6.4vw, 34px); }
+
+@keyframes bica-drop {
+    from { transform: translateY(-70vh); }
+    to { transform: none; }
+}
+
+.bica__sub {
+    font-size: clamp(13px, 4.6vw, 20px);
+    letter-spacing: 0.35em;
+    min-height: 1.3em;
+    color: #f4efe6;
+    text-shadow: 2px 2px 0 #7b2cbf;
+}
+
+.bica__sub .cursor { animation: bica-blink 0.6s steps(2) infinite; }
+
+/* Neon tube that flickers on */
+.bica__sub.neon {
+    color: #ffe3f6;
+    letter-spacing: 0.45em;
+    text-shadow: 0 0 2px #fff, 0 0 8px #ff2fa8, 0 0 18px #ff2fa8, 0 0 32px #b0307a;
+    animation: bica-neon-on 0.9s steps(1) both;
+}
+
+@keyframes bica-neon-on {
+    0% { opacity: 0; }
+    10% { opacity: 1; }
+    16% { opacity: 0.15; }
+    26% { opacity: 1; }
+    32% { opacity: 0.3; }
+    46% { opacity: 1; }
+    52% { opacity: 0.6; }
+    60%, 100% { opacity: 1; }
+}
+
+.bica__tag {
+    font-size: clamp(7px, 2.4vw, 10px);
+    color: #c68a4a;
+    letter-spacing: 0.2em;
+    min-height: 1.2em;
+    text-align: center;
+    line-height: 1.8;
+}
+
+.bica__bar {
+    width: min(62vw, 300px);
+    height: 18px;
+    border: 3px solid #f4efe6;
+    padding: 2px;
+    box-shadow: 3px 3px 0 #7b2cbf;
+}
+
+.bica__bar i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: repeating-linear-gradient(90deg, #c68a4a 0 8px, transparent 8px 11px);
+}
+
+.bica__skip {
+    position: absolute;
+    bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    font-size: 8px;
+    color: #8a7a6a;
+    letter-spacing: 0.2em;
+    animation: bica-blink 1s steps(2) infinite;
+}
+
+@keyframes bica-blink {
+    50% { opacity: 0; }
+}
+
+/* iOS "add to home screen" help */
+.bica--help { cursor: default; }
+.bica__help {
+    max-width: 340px;
+    font-size: 11px;
+    line-height: 2.1;
+    text-align: left;
+    color: #f4efe6;
+}
+.bica__help b { color: #ffd23f; font-weight: normal; }
+.bica__help svg { vertical-align: middle; }
+.bica__btn {
+    font-family: inherit;
+    font-size: 14px;
+    color: #0d0614;
+    background: #ffd23f;
+    border: 0;
+    padding: 14px 28px;
+    box-shadow: 4px 4px 0 #ff5e5b;
+    cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bica.crt-on .bica__screen,
+    .bica.crt-off .bica__screen,
+    .bica__title span.in { animation-duration: 0.01s; }
+}
