@@ -62,7 +62,8 @@ const STR = {
             bomb: 'Bomba: rebenta as peças à volta',
             timer: 'Pára a queda durante 20s',
             hint: 'Mostra uma solução durante 20s',
-            recycle: 'Recicla peças ao acaso',
+            recycle: 'Raios reciclam peças e mudam o resultado',
+            heat: 'Calor: derrete o gelo das peças',
             ice: 'Gelo: esconde o número aos poucos'
         },
         // Fase D: modes, streak, missions, shop, ranking, accessibility
@@ -190,7 +191,8 @@ const STR = {
             bomb: 'Bomb: blows up nearby pieces',
             timer: 'Stops pieces falling for 20s',
             hint: 'Shows a solution for 20s',
-            recycle: 'Recycles random pieces',
+            recycle: 'Lightning recycles pieces and the target',
+            heat: 'Heat: melts the ice on pieces',
             ice: 'Ice: slowly hides the number'
         },
         modes: 'MODES',

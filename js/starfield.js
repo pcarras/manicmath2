@@ -153,6 +153,7 @@ export function createStarfield(scene, depth = -10) {
     }
 
     const bg = scene.add.image(0, 0, key).setOrigin(0).setDisplaySize(w, h).setDepth(depth);
+    addAmbience(scene, w, h, depth);
 
     const twinkles = settings.get('reduceMotion') ? 0 : Phaser.Math.Clamp(Math.round((w * h) / 14000), 12, 40);
     for (let i = 0; i < twinkles; i++) {
@@ -174,4 +175,100 @@ export function createStarfield(scene, depth = -10) {
         });
     }
     return bg;
+}
+
+// ------------------------------------------------------------------ ambience
+// Discreet "wow": two coloured nebulae drifting and breathing very slowly, plus a rare shooting
+// star. Only a few images and tweens, so it costs almost nothing per frame.
+
+const NEBULA_TINTS = [0x7c3aed, 0x0e7490, 0xbe185d];
+
+function ensureAmbienceTextures(scene) {
+    if (!scene.textures.exists('nebula')) {
+        const tex = scene.textures.createCanvas('nebula', 256, 256);
+        const ctx = tex.getContext();
+        // Soft lumpy cloud: a few overlapping radial blobs
+        const blobs = [[128, 128, 120, 1], [90, 110, 80, 0.7], [170, 150, 90, 0.6], [140, 80, 60, 0.5]];
+        for (const [x, y, r, a] of blobs) {
+            const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+            g.addColorStop(0, `rgba(255,255,255,${0.55 * a})`);
+            g.addColorStop(0.5, `rgba(255,255,255,${0.18 * a})`);
+            g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 256, 256);
+        }
+        tex.refresh();
+    }
+    if (!scene.textures.exists('shootingStar')) {
+        const tex = scene.textures.createCanvas('shootingStar', 160, 6);
+        const ctx = tex.getContext();
+        const g = ctx.createLinearGradient(0, 0, 160, 0);
+        g.addColorStop(0, 'rgba(255,255,255,0)');
+        g.addColorStop(0.85, 'rgba(200,220,255,0.7)');
+        g.addColorStop(1, 'rgba(255,255,255,1)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(0, 3);
+        ctx.lineTo(156, 0.5);
+        ctx.arc(156, 3, 2.5, -Math.PI / 2, Math.PI / 2);
+        ctx.lineTo(0, 3);
+        ctx.fill();
+        tex.refresh();
+    }
+}
+
+function addAmbience(scene, w, h, depth) {
+    ensureAmbienceTextures(scene);
+    const calm = settings.get('reduceMotion');
+    const size = Math.max(w, h);
+
+    for (let i = 0; i < 2; i++) {
+        const neb = scene.add.image(rand(0.15, 0.85) * w, (i === 0 ? rand(0.15, 0.4) : rand(0.6, 0.85)) * h, 'nebula')
+            .setTint(NEBULA_TINTS[(Math.random() * NEBULA_TINTS.length) | 0])
+            .setDisplaySize(size * rand(0.8, 1.05), size * rand(0.6, 0.8))
+            .setAngle(rand(-30, 30))
+            .setAlpha(0.13)
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setDepth(depth + 0.2);
+        if (calm) continue;
+        scene.tweens.add({
+            targets: neb,
+            x: neb.x + rand(-60, 60),
+            y: neb.y + rand(-40, 40),
+            angle: neb.angle + rand(-8, 8),
+            duration: rand(22000, 32000),
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+        scene.tweens.add({
+            targets: neb, alpha: 0.22, duration: rand(6000, 9000), yoyo: true, repeat: -1, ease: 'Sine.easeInOut'
+        });
+    }
+    if (calm) return;
+
+    // A shooting star every 7-14 s, never twice in the same place
+    const shoot = () => {
+        const star = scene.add.image(rand(0.3, 1.1) * w, rand(-0.05, 0.45) * h, 'shootingStar')
+            .setOrigin(1, 0.5)
+            .setAngle(rand(140, 160))
+            .setAlpha(0)
+            .setScale(rand(0.6, 1))
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setScrollFactor(0)
+            .setDepth(depth + 0.5);
+        const a = Phaser.Math.DegToRad(star.angle);
+        const dist = rand(0.35, 0.6) * w;
+        scene.tweens.add({
+            targets: star,
+            x: star.x + Math.cos(a) * dist,
+            y: star.y + Math.sin(a) * dist,
+            duration: rand(700, 1000),
+            ease: 'Cubic.easeIn',
+            onComplete: () => star.destroy()
+        });
+        scene.tweens.add({ targets: star, alpha: { from: 0, to: 0.9 }, duration: 250, yoyo: true, hold: 300 });
+        scene.time.delayedCall(rand(7000, 14000), shoot);
+    };
+    scene.time.delayedCall(rand(2500, 6000), shoot);
 }

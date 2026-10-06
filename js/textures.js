@@ -340,6 +340,32 @@ function drawRecycleIcon(ctx, c) {
     ctx.restore();
 }
 
+// Flame: outer orange tongue, inner yellow core
+function drawFlameIcon(ctx, c) {
+    const flame = (scale, color, dy) => {
+        const s = R * scale;
+        const y0 = c + dy;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(c, y0 - s * 1.05);
+        ctx.bezierCurveTo(c + s * 0.25, y0 - s * 0.55, c + s * 0.8, y0 - s * 0.35, c + s * 0.62, y0 + s * 0.28);
+        ctx.bezierCurveTo(c + s * 0.5, y0 + s * 0.72, c + s * 0.15, y0 + s * 0.85, c, y0 + s * 0.85);
+        ctx.bezierCurveTo(c - s * 0.15, y0 + s * 0.85, c - s * 0.5, y0 + s * 0.72, c - s * 0.62, y0 + s * 0.28);
+        ctx.bezierCurveTo(c - s * 0.75, y0 - s * 0.15, c - s * 0.35, y0 - s * 0.3, c - s * 0.2, y0 - s * 0.62);
+        ctx.bezierCurveTo(c - s * 0.1, y0 - s * 0.4, c - s * 0.05, y0 - s * 0.75, c, y0 - s * 1.05);
+        ctx.closePath();
+        ctx.fill();
+    };
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,170,60,0.9)';
+    ctx.shadowBlur = 8;
+    flame(0.62, '#ff8a1f', 2);
+    ctx.shadowBlur = 0;
+    flame(0.4, '#ffd23f', 7);
+    flame(0.2, '#fff6c2', 11);
+    ctx.restore();
+}
+
 function drawClock(ctx, c) {
     ctx.save();
     ctx.strokeStyle = '#ffffff';
@@ -460,6 +486,28 @@ export function ensureTextures(scene) {
         ctx.fillRect(0, 0, 256, 256);
     });
 
+    // Heat wave: a soft hot ring with a bright leading edge, scaled up from the heat piece
+    canvasTexture(scene, 'heatwave', 256, 256, (ctx) => {
+        const g = ctx.createRadialGradient(128, 128, 60, 128, 128, 128);
+        g.addColorStop(0, 'rgba(255,120,40,0)');
+        g.addColorStop(0.55, 'rgba(255,90,30,0.10)');
+        g.addColorStop(0.82, 'rgba(255,170,60,0.55)');
+        g.addColorStop(0.92, 'rgba(255,240,180,0.9)');
+        g.addColorStop(1, 'rgba(255,200,120,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 256, 256);
+    });
+
+    // Steam puff for melting ice
+    canvasTexture(scene, 'steam', 32, 32, (ctx) => {
+        const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+        g.addColorStop(0, 'rgba(255,255,255,0.7)');
+        g.addColorStop(0.6, 'rgba(235,245,255,0.25)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 32, 32);
+    });
+
     // Selection / hint ring, tinted at use
     const RING = S + 16;
     canvasTexture(scene, 'ring', RING, RING, (ctx) => {
@@ -543,6 +591,10 @@ function bakePieces(scene, prefix, style) {
     canvasTexture(scene, `${prefix}special_recycle`, S, S, (ctx) => {
         drawBall(ctx, c, COLORS.specials.recycle, style);
         drawRecycleIcon(ctx, c);
+    });
+    canvasTexture(scene, `${prefix}special_heat`, S, S, (ctx) => {
+        drawBall(ctx, c, COLORS.specials.heat, style);
+        drawFlameIcon(ctx, c);
     });
 }
 

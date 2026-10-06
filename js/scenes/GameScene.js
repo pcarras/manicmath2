@@ -15,7 +15,7 @@ import { submitScore, shareText, share } from '../ranking.js';
 
 const {
     RADIUS: R, DIAMETER, TIMER_POWERUP_MS, HINT_POWERUP_MS,
-    ICE_CHANCE, ICE_FREEZE_MS, DANGER_MS, DAILY_MS, SPRINT_MS
+    ICE_CHANCE, ICE_FREEZE_MS, DANGER_MS, DAILY_MS, SPRINT_MS, HEAT_THAW_MS, START_PIECES
 } = CONSTANTS;
 
 const OPS = ['+', '-', '×', '÷'];
@@ -169,6 +169,7 @@ export class GameScene extends Phaser.Scene {
             this.startTutorial();
             this.gameStarted = true;
         } else {
+            this.prefill();
             this.newTarget();
             this.countdown(() => { this.gameStarted = true; }, true);
         }
@@ -363,6 +364,16 @@ export class GameScene extends Phaser.Scene {
             scale: { start: 2, end: 0 },
             blendMode: 'ADD',
             lifespan: 500,
+            emitting: false
+        }).setDepth(200);
+
+        // Steam rising off melting ice
+        this.steamFx = this.add.particles(0, 0, 'steam', {
+            speedY: { min: -90, max: -40 },
+            speedX: { min: -25, max: 25 },
+            scale: { start: 0.7, end: 1.8 },
+            alpha: { start: 0.75, end: 0 },
+            lifespan: 900,
             emitting: false
         }).setDepth(200);
 
@@ -576,6 +587,23 @@ export class GameScene extends Phaser.Scene {
 
     // ------------------------------------------------------------------ pieces
 
+    // A game starts with a dozen pieces already tumbling in during the countdown, so every
+    // opening is different. At most one special among them. Seeded in the daily challenge.
+    prefill() {
+        const cols = 5;
+        const colW = (this.w - 2 * R - 8) / (cols - 1);
+        let specials = 0;
+        for (let i = 0; i < START_PIECES; i++) {
+            let data = this.randomPieceData();
+            while (data.type === 'special' && specials >= 1) data = this.randomPieceData();
+            if (data.type === 'special') specials++;
+            const row = Math.floor(i / cols);
+            const x = R + 4 + (i % cols) * colW + (this.rand(this.pieceRng) - 0.5) * colW * 0.5;
+            const y = -R * 2 - row * DIAMETER * 1.25 - this.rand(this.pieceRng) * R;
+            this.createPiece(data, Phaser.Math.Clamp(x, R + 2, this.w - R - 2), y);
+        }
+    }
+
     randomPieceData() {
         const rng = this.pieceRng;
         const r = this.rand(rng);
@@ -584,7 +612,8 @@ export class GameScene extends Phaser.Scene {
         else if (r < 0.08) data = { type: 'special', special: 'timer' };
         else if (r < 0.11) data = { type: 'special', special: 'hint' };
         else if (r < 0.14) data = { type: 'special', special: 'recycle' };
-        else if (r < 0.6) data = { type: 'number', value: this.randInt(rng, 1, 9) };
+        else if (r < 0.17) data = { type: 'special', special: 'heat' };
+        else if (r < 0.62) data = { type: 'number', value: this.randInt(rng, 1, 9) };
         else data = { type: 'operator', value: this.pick(rng, this.allowedOps()) };
         if (data.type !== 'special') data.iceRoll = this.rand(rng) < ICE_CHANCE;
         data.fx = this.rand(rng);   // spawn column as a fraction of the width
@@ -989,6 +1018,7 @@ export class GameScene extends Phaser.Scene {
         else if (p.special === 'timer') this.startTimerPowerUp();
         else if (p.special === 'hint') this.startHintPowerUp();
         else if (p.special === 'recycle') this.recycle(x, y);
+        else if (p.special === 'heat') this.heatWave(x, y);
     }
 
     explode(x, y) {
@@ -1030,20 +1060,154 @@ export class GameScene extends Phaser.Scene {
         this.ensureSolvable();
     }
 
+    // Branching lightning from the recycle piece to several pieces and to the target, which
+    // scrambles and changes. Bolts flicker (re-generated a few times) before the hits land.
     recycle(x, y) {
-        this.playSound('sparksSound', 0.7);
-        const candidates = this.pieces.filter((q) => !q.selected && Math.random() < 0.3).slice(0, 8);
-        if (candidates.length === 0) return;
+        this.playSound('sparksSound', 0.85);
+        const pool = Phaser.Utils.Array.Shuffle(this.pieces.filter((q) => !q.selected));
+        const hits = pool.slice(0, Math.min(pool.length, 5 + Math.floor(Math.random() * 3)));
+        const ends = hits.map((q) => ({ x: q.body.position.x, y: q.body.position.y }));
+        ends.push({ x: this.targetX, y: this.eqY });
 
-        const gfx = this.add.graphics().setDepth(1000);
-        for (const q of candidates) {
-            this.drawLightning(gfx, x, y, q.body.position.x, q.body.position.y);
-            this.sparks.emitParticleAt(q.body.position.x, q.body.position.y, 8);
-            this.removePiece(q);
+        const gfx = this.add.graphics().setDepth(1000).setBlendMode(Phaser.BlendModes.ADD);
+        const strike = () => {
+            gfx.clear();
+            gfx.fillStyle(0xbae6fd, 0.35);
+            gfx.fillCircle(x, y, 26);
+            gfx.fillStyle(0xffffff, 0.8);
+            gfx.fillCircle(x, y, 10);
+            ends.forEach((e) => this.drawBolt(gfx, x, y, e.x, e.y));
+        };
+        strike();
+        this.time.delayedCall(60, strike);
+        this.time.delayedCall(120, strike);
+        this.flash(120, 120, 200, 255);
+        this.shake(220, 0.008);
+        haptic('bomb');
+
+        this.time.delayedCall(70, () => {
+            hits.forEach((q) => {
+                if (!q.alive) return;
+                const qx = q.body.position.x;
+                const qy = q.body.position.y;
+                this.sparks.emitParticleAt(qx, qy, 10);
+                this.burst.setParticleTint(0x7dd3fc);
+                this.burst.emitParticleAt(qx, qy, 8);
+                this.removePiece(q);
+            });
+            this.scrambleTarget();
+        });
+        this.tweens.add({ targets: gfx, alpha: 0, delay: 170, duration: 260, onComplete: () => gfx.destroy() });
+    }
+
+    // Target flickers through random numbers like a slot machine, then lands on a new one
+    scrambleTarget() {
+        const txt = this.targetText;
+        this.tweens.killTweensOf(txt);
+        txt.setScale(1.15);
+        this.time.addEvent({
+            delay: 45, repeat: 8,
+            callback: () => { if (txt.active) txt.setText(String(1 + Math.floor(Math.random() * 45))); }
+        });
+        this.time.delayedCall(430, () => {
+            if (this.gameOver) return;
+            this.newTarget();
+            this.ensureSolvable();
+        });
+    }
+
+    // Jagged path by midpoint displacement: each split pushes the middle sideways by an amount
+    // that halves with the segment, which gives the natural fractal look of real lightning
+    boltPoints(x1, y1, x2, y2, roughness = 0.32) {
+        const pts = [{ x: x1, y: y1 }];
+        const split = (ax, ay, bx, by, disp) => {
+            const len = Math.hypot(bx - ax, by - ay);
+            if (len < 14) {
+                pts.push({ x: bx, y: by });
+                return;
+            }
+            const nx = -(by - ay) / len;
+            const ny = (bx - ax) / len;
+            const off = (Math.random() - 0.5) * disp;
+            const mx = (ax + bx) / 2 + nx * off;
+            const my = (ay + by) / 2 + ny * off;
+            split(ax, ay, mx, my, disp / 2);
+            split(mx, my, bx, by, disp / 2);
+        };
+        split(x1, y1, x2, y2, Math.hypot(x2 - x1, y2 - y1) * roughness);
+        return pts;
+    }
+
+    strokeBolt(g, pts, width) {
+        [[width * 5, 0x38bdf8, 0.14], [width * 2.4, 0x7dd3fc, 0.45], [width, 0xffffff, 1]].forEach(([lw, color, alpha]) => {
+            g.lineStyle(lw, color, alpha);
+            g.beginPath();
+            g.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+            g.strokePath();
+        });
+    }
+
+    drawBolt(g, x1, y1, x2, y2) {
+        const main = this.boltPoints(x1, y1, x2, y2);
+        this.strokeBolt(g, main, 2.2);
+        // 1-3 thinner forks that split off the main channel and die out
+        const forks = 1 + Math.floor(Math.random() * 3);
+        for (let f = 0; f < forks; f++) {
+            const i = 2 + Math.floor(Math.random() * Math.max(1, main.length - 4));
+            const p = main[Math.min(i, main.length - 1)];
+            const dir = Math.atan2(y2 - y1, x2 - x1) + (Math.random() < 0.5 ? -1 : 1) * Phaser.Math.FloatBetween(0.35, 0.9);
+            const len = Math.hypot(x2 - x1, y2 - y1) * Phaser.Math.FloatBetween(0.15, 0.3);
+            this.strokeBolt(g, this.boltPoints(p.x, p.y, p.x + Math.cos(dir) * len, p.y + Math.sin(dir) * len, 0.4), 1);
         }
-        this.tweens.add({ targets: gfx, alpha: 0, duration: 400, onComplete: () => gfx.destroy() });
-        this.shake(150, 0.005);
-        this.ensureSolvable();
+        g.fillStyle(0xe0f2fe, 0.6);
+        g.fillCircle(x2, y2, 9);
+    }
+
+    // Heat wave: hot rings expand from the piece; when the front reaches a frozen piece its ice
+    // melts in a puff of steam. The ice grows back slowly after HEAT_THAW_MS.
+    heatWave(x, y) {
+        this.playSound('sparksSound', 0.45);
+        this.playSound('timeSound', 0.35);
+        const reach = Math.hypot(Math.max(x, this.w - x), Math.max(y, this.h - y)) + R;
+        const travel = 950;
+        for (let k = 0; k < 3; k++) {
+            const ring = this.add.image(x, y, 'heatwave').setDepth(185).setBlendMode(Phaser.BlendModes.ADD)
+                .setScale(0.05).setAlpha(1 - k * 0.28);
+            this.tweens.add({
+                targets: ring, scale: (reach * 2) / 256 * 1.08, duration: travel, delay: k * 150, ease: 'Linear',
+                onComplete: () => ring.destroy()
+            });
+            this.tweens.add({ targets: ring, alpha: 0, delay: k * 150 + travel * 0.6, duration: travel * 0.4 });
+        }
+        // Warm air over the whole screen for a moment
+        const warm = this.add.rectangle(this.w / 2, this.h / 2, this.w, this.h, 0xff7a1a, 1).setDepth(6).setAlpha(0);
+        this.tweens.add({
+            targets: warm, alpha: 0.12, duration: 250, yoyo: true, hold: 350, onComplete: () => warm.destroy()
+        });
+        this.burst.setParticleTint(0xff8a1f);
+        this.burst.emitParticleAt(x, y, 20);
+        this.sparks.emitParticleAt(x, y, 14);
+
+        for (const p of this.pieces) {
+            if (!p.ice) continue;
+            const d = Phaser.Math.Distance.Between(x, y, p.body.position.x, p.body.position.y);
+            this.time.delayedCall((d / reach) * travel, () => this.thaw(p));
+        }
+    }
+
+    thaw(p) {
+        if (!p.alive || !p.ice) return;
+        const ice = p.ice;
+        this.tweens.killTweensOf(ice);
+        const { x, y } = p.body.position;
+        this.steamFx.emitParticleAt(x, y - R * 0.3, 7);
+        this.tweens.add({ targets: p.img, scale: 1.12 * INV, duration: 90, yoyo: true });
+        this.tweens.add({ targets: ice, alpha: 0, duration: 300, ease: 'Cubic.easeOut' });
+        this.time.delayedCall(HEAT_THAW_MS, () => {
+            if (!p.alive || !p.ice) return;
+            this.tweens.add({ targets: p.ice, alpha: 0.95, duration: ICE_FREEZE_MS * 1.4, ease: 'Sine.easeIn' });
+        });
     }
 
     startTimerPowerUp() {
@@ -1075,32 +1239,6 @@ export class GameScene extends Phaser.Scene {
         this.hintRemaining = 0;
         this.hintPieces = [];
         this.hintBadge.setVisible(false);
-    }
-
-    drawLightning(graphics, x1, y1, x2, y2) {
-        const distance = Phaser.Math.Distance.Between(x1, y1, x2, y2);
-        if (distance < 1) return;
-
-        const steps = Math.ceil(distance / 10);
-        const angle = Phaser.Math.Angle.Between(x1, y1, x2, y2) + Math.PI / 2;
-        const points = [{ x: x1, y: y1 }];
-        for (let i = 1; i < steps; i++) {
-            const t = i / steps;
-            const offset = (Math.random() - 0.5) * 20;
-            points.push({
-                x: x1 + (x2 - x1) * t + Math.cos(angle) * offset,
-                y: y1 + (y2 - y1) * t + Math.sin(angle) * offset
-            });
-        }
-        points.push({ x: x2, y: y2 });
-
-        [[6, 0x00FFFF, 0.4], [3, 0xFFFF00, 0.8], [1.5, 0xFFFFFF, 1]].forEach(([width, color, alpha]) => {
-            graphics.lineStyle(width, color, alpha);
-            graphics.beginPath();
-            graphics.moveTo(points[0].x, points[0].y);
-            for (let i = 1; i < points.length; i++) graphics.lineTo(points[i].x, points[i].y);
-            graphics.strokePath();
-        });
     }
 
     // ------------------------------------------------------------------ helpers
@@ -1601,7 +1739,7 @@ export class GameScene extends Phaser.Scene {
         this.showTutBubble(null);
 
         this.time.delayedCall(700, () => {
-            const m = modal(this, { depth: 600, height: 470, title: t('tutDoneTitle') });
+            const m = modal(this, { depth: 600, height: 510, title: t('tutDoneTitle') });
             const { panel } = m;
             let y = panel.y + 84;
             t('tutDone').forEach((line) => {
@@ -1617,6 +1755,7 @@ export class GameScene extends Phaser.Scene {
                 ['piece_special_timer', specials.timer],
                 ['piece_special_hint', specials.hint],
                 ['piece_special_recycle', specials.recycle],
+                ['piece_special_heat', specials.heat],
                 ['piece_num_7', specials.ice, true]
             ];
             const left = panel.x + 26;

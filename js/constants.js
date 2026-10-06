@@ -13,7 +13,8 @@ export const COLORS = {
         bomb: 0x2a2a35,
         timer: 0x2563eb,
         hint: 0xd97706,
-        recycle: 0x65a30d
+        recycle: 0x65a30d,
+        heat: 0xdc2626
     },
     selection: 0xFFE066,
     hint: 0x34D399
@@ -27,6 +28,8 @@ export const CONSTANTS = {
     HINT_POWERUP_MS: 20000,
     ICE_CHANCE: 0.15,          // share of number/operator pieces that freeze
     ICE_FREEZE_MS: 5000,       // time for the ice cover to go from clear to opaque
+    HEAT_THAW_MS: 9000,        // heat power-up: frozen pieces stay clear this long, then refreeze slowly
+    START_PIECES: 12,          // pieces already falling when a game starts
     DANGER_MS: 1200,           // a settled piece above the death line for this long ends the game
     DAILY_MS: 120000,          // daily challenge length (time attack)
     SPRINT_MS: 60000           // sprint mode length
