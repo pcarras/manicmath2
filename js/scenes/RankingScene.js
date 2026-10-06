@@ -4,15 +4,23 @@ import { t } from '../i18n.js';
 import { chunkyButton } from '../ui.js';
 import { RES, view, setupCamera } from '../display.js';
 import { todayKey } from '../stats.js';
-import { player, rerollName } from '../progress.js';
+import { player } from '../progress.js';
 import { fetchBoard } from '../ranking.js';
+import { askName } from '../nameDialog.js';
 
 const ROW_H = 44;
+const BOARDS = ['daily', 'classic', 'sprint'];
+const TAB_KEYS = { daily: 'boardDaily', classic: 'boardClassic', sprint: 'boardSprint' };
 
-// Today's daily challenge ranking. Scrolls like the achievements list; header and footer stay fixed.
+// Rankings: today's daily challenge, and the best ever classic and sprint scores.
+// The list scrolls like the achievements screen; header (tabs + name) and footer stay fixed.
 export class RankingScene extends Phaser.Scene {
     constructor() {
         super({ key: 'RankingScene' });
+    }
+
+    init(data) {
+        this.board = BOARDS.includes(data && data.board) ? data.board : 'daily';
     }
 
     create() {
@@ -21,31 +29,39 @@ export class RankingScene extends Phaser.Scene {
         const top = safeAreaTop();
         this.w = w;
         this.h = h;
-        this.listTop = top + 150;
+        this.listTop = top + 196;
         createStarfield(this);
         this.children.list.forEach((o) => o.setScrollFactor(0));
 
         const header = this.add.graphics().setScrollFactor(0).setDepth(50);
         header.fillStyle(0x0b0620, 0.96);
-        header.fillRect(0, 0, w, top + 136);
+        header.fillRect(0, 0, w, top + 172);
         header.lineStyle(2, 0x6366f1, 0.5);
-        header.lineBetween(0, top + 136, w, top + 136);
-        this.add.text(w / 2, top + 34, t('rankingToday'), {
-            fontFamily: 'Righteous', fontSize: '28px', color: '#ffd23f', stroke: '#1b0f2e', strokeThickness: 6
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
-        this.add.text(w / 2, top + 64, todayKey(), {
-            fontFamily: 'Roboto', fontSize: '13px', color: '#a5a8ff'
+        header.lineBetween(0, top + 172, w, top + 172);
+        this.add.text(w / 2, top + 32, t('rankingTitle'), {
+            fontFamily: 'Righteous', fontSize: '30px', color: '#ffd23f', stroke: '#1b0f2e', strokeThickness: 6
         }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
 
-        // Player name (generated from word lists) + reroll
-        this.nameText = this.add.text(22, top + 104, '', {
+        // Tabs
+        const tabW = Math.min(112, (w - 40) / 3);
+        BOARDS.forEach((b, i) => {
+            const on = b === this.board;
+            chunkyButton(this, w / 2 + (i - 1) * (tabW + 8), top + 80, t(TAB_KEYS[b]), on ? 0xa855f7 : 0x3a3458,
+                () => { if (!on) this.scene.restart({ board: b }); },
+                { width: tabW, height: 38, fontSize: 15, depth: 52, enter: false }).setScrollFactor(0);
+        });
+        this.add.text(w / 2, top + 112, this.board === 'daily' ? todayKey() : t('rankingAllTime'), {
+            fontFamily: 'Roboto', fontSize: '12px', color: '#a5a8ff'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
+
+        // Player name + change
+        this.nameText = this.add.text(22, top + 146, '', {
             fontFamily: 'Righteous', fontSize: '15px', color: '#ffffff'
         }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(51);
         this.showName();
-        chunkyButton(this, w - 78, top + 104, t('newName'), 0x0d9488, () => {
-            rerollName();
-            this.showName();
-        }, { width: 124, height: 34, fontSize: 14, depth: 52, enter: false }).setScrollFactor(0);
+        chunkyButton(this, w - 66, top + 146, t('change'), 0x0d9488, () => {
+            askName().then((name) => { if (name && this.sys.isActive()) this.scene.restart({ board: this.board }); });
+        }, { width: 100, height: 34, fontSize: 15, depth: 52, enter: false }).setScrollFactor(0);
 
         const footer = this.add.graphics().setScrollFactor(0).setDepth(50);
         footer.fillStyle(0x0b0620, 0.96);
@@ -57,7 +73,7 @@ export class RankingScene extends Phaser.Scene {
             fontFamily: 'Righteous', fontSize: '17px', color: '#c9c7ee', align: 'center', wordWrap: { width: w - 60 }
         }).setOrigin(0.5);
 
-        fetchBoard(todayKey()).then((r) => {
+        fetchBoard(this.board, todayKey()).then((r) => {
             if (!this.sys.isActive()) return;
             if (!r.ok) {
                 this.status.setText(r.reason === 'soon' ? t('rankingSoon') : t('rankingOffline'));
@@ -68,13 +84,17 @@ export class RankingScene extends Phaser.Scene {
     }
 
     showName() {
-        this.nameText.setText(`${t('yourName')}: ${player().name}`);
+        const name = player().name;
+        this.nameText.setText(`${t('yourName')}: ${name}`);
+        // Shrink long names so the CHANGE button never overlaps
+        this.nameText.setFontSize(this.nameText.width > this.w - 150 ? 12 : 15);
     }
 
     render(data) {
         const { w } = this;
         if (data.top.length === 0) {
-            this.status.setText(`${t('rankingEmpty')}\n\n${t('rankingHint')}`);
+            const hint = this.board === 'daily' ? t('rankingHint') : t('rankingPlayHint');
+            this.status.setText(`${t('rankingEmpty')}\n\n${hint}`);
             return;
         }
         this.status.setVisible(false);
@@ -97,9 +117,10 @@ export class RankingScene extends Phaser.Scene {
             this.add.text(38, y, String(i + 1), {
                 fontFamily: 'Righteous', fontSize: '15px', color: i < 3 ? '#2b160b' : '#a5a8ff'
             }).setOrigin(0.5);
-            this.add.text(64, y, row.me ? `${row.name}  (${t('you')})` : row.name, {
+            const label = this.add.text(64, y, row.me ? `${row.name}  (${t('you')})` : row.name, {
                 fontFamily: 'Righteous', fontSize: '16px', color: row.me ? '#ffd23f' : '#ffffff'
             }).setOrigin(0, 0.5);
+            if (label.width > w - 160) label.setFontSize(13);
             this.add.text(w - 28, y, String(row.score), {
                 fontFamily: 'Righteous', fontSize: '17px', color: '#FFB347'
             }).setOrigin(1, 0.5);

@@ -10,7 +10,7 @@ import { chunkyButton, roundButton, modal, openSettings } from '../ui.js';
 import { stats, daily, todayKey, modeBest } from '../stats.js';
 import { report, achievementText, drawMedal } from '../achievements.js';
 import { MusicDirector } from '../music.js';
-import { track, addBeans, beansForScore, completeDaily, missionText } from '../progress.js';
+import { track, addBeans, completeDaily, missionText } from '../progress.js';
 import { submitScore, shareText, share } from '../ranking.js';
 
 const {
@@ -50,6 +50,7 @@ export class GameScene extends Phaser.Scene {
         this.dailyRemaining = this.sprint ? SPRINT_MS : DAILY_MS;
         this.lastDailySecs = -1;
         this.solvedOps = [];               // operator of each equation, for the share grid
+        this.beansEarned = 0;              // coffee beans won during this game (paid as they come)
         this.pieceRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-pieces`]) : null;
         this.targetRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-targets`]) : null;
         this.level = 1;
@@ -1022,8 +1023,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     explode(x, y) {
-        const radius = R * 3.2;
-        const pushRadius = radius * 2.2;
+        const radius = R * 3.2 * 1.3;   // +30% reach
+        const pushRadius = radius * 2;
         this.playSound('explosionSound', 0.9);
         this.shake(320, 0.02);
         haptic('bomb');
@@ -1292,6 +1293,20 @@ export class GameScene extends Phaser.Scene {
             duration: 900,
             ease: 'Cubic.easeOut',
             onComplete: () => t.destroy()
+        });
+    }
+
+    // Coffee beans are banked straight away (quitting mid-game keeps them)
+    earnBeans(n, x, y) {
+        const won = this.zen ? Math.ceil(n / 2) : n;
+        this.beansEarned += won;
+        addBeans(won);
+        const label = this.add.text(x, y, t('beanPlus', { n: won }), {
+            fontFamily: 'Righteous', fontSize: '17px', color: '#ffd9a8', stroke: '#2b160b', strokeThickness: 4
+        }).setOrigin(0.5).setDepth(205).setAlpha(0);
+        this.tweens.add({ targets: label, alpha: 1, y: y - 10, duration: 160, delay: 180 });
+        this.tweens.add({
+            targets: label, alpha: 0, y: y - 34, delay: 820, duration: 320, onComplete: () => label.destroy()
         });
     }
 
@@ -1579,6 +1594,8 @@ export class GameScene extends Phaser.Scene {
 
         this.streak++;
         this.solvedOps.push(op);
+        // A bean per equation, one more on a hot combo
+        if (!this.tutorial) this.earnBeans(this.combo >= 3 ? 2 : 1, this.w * 0.3, this.uiHeight + 28);
         if (!this.tutorial) {
             this.toastAchievements(report('solve', {
                 op, combo: this.combo, level: this.level, score: this.score, iced, streak: this.streak
@@ -1616,6 +1633,7 @@ export class GameScene extends Phaser.Scene {
         this.updateLevelHud();
         this.music.setLevel(this.level);
         this.toastAchievements(report('level', { level: this.level }));
+        this.earnBeans(3, this.w / 2, this.h * 0.42 + 90);
         this.toastMissions(track('level', { level: this.level }));
     }
 
@@ -1793,15 +1811,15 @@ export class GameScene extends Phaser.Scene {
         this.toastAchievements(report('gameOver', { score: this.score, level: this.level, daily: !!this.daily }));
         this.toastMissions(track('gameOver', { score: this.score, level: this.level, mode: this.mode }));
 
-        // Coffee beans for playing (zen pays half: there is no pressure)
-        result.beans = Math.round(beansForScore(this.score) * (this.zen ? 0.5 : 1));
-        if (result.beans) addBeans(result.beans);
+        // End bonus on top of the beans won during play (zen pays half: there is no pressure)
+        const bonus = Math.round(Math.floor(this.score / 500) * (this.zen ? 0.5 : 1));
+        if (bonus) addBeans(bonus);
+        result.beans = this.beansEarned + bonus;
 
-        if (this.daily) {
-            result.streak = completeDaily();
-            // Fire and forget: the game over panel shows the rank when it arrives
-            result.rankPromise = submitScore(this.dailyKey, this.score);
-        }
+        if (this.daily) result.streak = completeDaily();
+        // Fire and forget: the game over panel shows the rank when it arrives
+        this.rankBoard = this.daily ? 'daily' : this.sprint ? 'sprint' : this.zen ? null : 'classic';
+        if (this.rankBoard && this.score > 0) result.rankPromise = submitScore(this.rankBoard, this.score, this.dailyKey);
 
         this.gameOverCascade(() => this.showGameOverPanel(result));
     }
@@ -1829,7 +1847,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     showGameOverPanel(result) {
-        const extra = this.daily ? 118 : 30;
+        const extra = this.daily ? 118 : this.rankBoard ? 96 : 30;
         const m = modal(this, { depth: 500, height: 440 + extra });
         const { panel } = m;
 
@@ -1878,19 +1896,44 @@ export class GameScene extends Phaser.Scene {
         this.tweens.add({ targets: line, alpha: 1, duration: 300, delay: 1500 });
 
         // Coffee beans earned
-        const beansLine = m.add(this.add.text(panel.cx, panel.y + 268, result.beans ? `☕ ${t('earned', { n: result.beans })}` : '', {
+        const beansLine = m.add(this.add.text(panel.cx, panel.y + 268, result.beans ? `☕ ${t(result.beans === 1 ? 'earnedOne' : 'earned', { n: result.beans })}` : '', {
             fontFamily: 'Righteous', fontSize: '16px', color: '#e8b878'
         }).setOrigin(0.5).setDepth(m.depth).setAlpha(0));
         this.tweens.add({ targets: beansLine, alpha: 1, duration: 300, delay: 1600 });
 
         let y = panel.y + 268;
         if (this.daily) y = this.dailyResults(m, result, y);
+        else if (this.rankBoard) y = this.rankResults(m, result, y);
 
         const bw = Math.min(240, panel.w - 48);
         m.add(chunkyButton(this, panel.cx, y + 62, t('restart'), 0x22c55e, () => this.scene.restart(this.restartData()),
             { width: bw, height: 58, fontSize: 26, depth: m.depth, delay: 900 }));
         m.add(chunkyButton(this, panel.cx, y + 132, t('menu'), 0x8b5cf6, () => this.scene.start('MenuScene'),
             { width: bw, height: 50, fontSize: 22, depth: m.depth, delay: 1050 }));
+    }
+
+    // "Ranking: #N" once the server answers
+    rankLine(m, result, y) {
+        const line = m.add(this.add.text(m.panel.cx, y, '', {
+            fontFamily: 'Righteous', fontSize: '15px', color: '#c4a7ff'
+        }).setOrigin(0.5).setDepth(m.depth));
+        if (!result.rankPromise) return;
+        result.rankPromise.then((r) => {
+            if (!line.active) return;
+            if (r.ok && r.data.me) line.setText(`🏆 ${t('ranking')}: #${r.data.me.rank}`);
+            else if (!r.ok) {
+                line.setText(r.reason === 'soon' ? t('rankingSoon') : r.reason === 'name' ? t('name_refused') : t('rankingOffline'));
+            }
+        });
+    }
+
+    // Classic and sprint: rank + RANKING button. Returns the next free y.
+    rankResults(m, result, y) {
+        this.rankLine(m, result, y + 26);
+        m.add(chunkyButton(this, m.panel.cx, y + 66, t('ranking'), 0xa855f7,
+            () => this.scene.start('RankingScene', { board: this.rankBoard }),
+            { width: Math.min(200, m.panel.w - 60), height: 42, fontSize: 18, depth: m.depth, delay: 1150 }));
+        return y + 96;
     }
 
     // Daily extras on the game over panel: streak, rank, SHARE and RANKING. Returns the next free y.
@@ -1909,16 +1952,7 @@ export class GameScene extends Phaser.Scene {
             this.tweens.add({ targets: streakLine, scale: 1.15, duration: 260, yoyo: true, delay: 1800, ease: 'Back.easeOut' });
         }
 
-        const rankLine = m.add(this.add.text(panel.cx, y + 54, '', {
-            fontFamily: 'Roboto', fontSize: '14px', color: '#a5a8ff'
-        }).setOrigin(0.5).setDepth(m.depth));
-        if (result.rankPromise) {
-            result.rankPromise.then((r) => {
-                if (!rankLine.active) return;
-                if (r.ok && r.data.me) rankLine.setText(`${t('ranking')}: #${r.data.me.rank}`);
-                else if (!r.ok) rankLine.setText(r.reason === 'soon' ? t('rankingSoon') : t('rankingOffline'));
-            });
-        }
+        this.rankLine(m, result, y + 54);
 
         const half = Math.min(118, (panel.w - 60) / 2);
         const bestMult = this.bestCombo >= 2 ? Math.min(SCORING.comboMax, 1 + (this.bestCombo - 1) * SCORING.comboStep) : 1;
@@ -1931,7 +1965,7 @@ export class GameScene extends Phaser.Scene {
             if (how === 'copied' && shareBtn.active) shareBtn.label.setText(t('copied'));
         }, { width: half, height: 46, fontSize: 18, depth: m.depth, delay: 1100 }));
         m.add(chunkyButton(this, panel.cx + half / 2 + 6, y + 98, t('ranking'), 0xa855f7,
-            () => this.scene.start('RankingScene'),
+            () => this.scene.start('RankingScene', { board: 'daily' }),
             { width: half, height: 46, fontSize: 18, depth: m.depth, delay: 1150 }));
         return y + 118;
     }

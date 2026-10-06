@@ -270,7 +270,17 @@ export function player() {
         s.player = { id, n: Math.floor(rnd() * NAME_NOUNS.length), a: Math.floor(rnd() * NAME_ADJS.length), num: 1 + Math.floor(rnd() * 99) };
         save(s);
     }
-    return { ...s.player, name: `${NAME_NOUNS[s.player.n]} ${NAME_ADJS[s.player.a]} ${s.player.num}` };
+    const generated = `${NAME_NOUNS[s.player.n]} ${NAME_ADJS[s.player.a]} ${s.player.num}`;
+    return { ...s.player, name: s.player.custom || generated, generated };
+}
+
+// Name typed by the player (already checked with js/namefilter.js)
+export function setPlayerName(name) {
+    player();
+    const s = load();
+    s.player = { ...s.player, custom: name };
+    save(s);
+    notify();
 }
 
 // Re-roll the generated name (keeps the same player id)

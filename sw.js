@@ -23,6 +23,8 @@ const ASSETS = [
     './js/music.js',
     './js/progress.js',
     './js/ranking.js',
+    './js/namefilter.js',
+    './js/nameDialog.js',
     './js/scenes/AchievementsScene.js',
     './js/scenes/GameScene.js',
     './js/scenes/MenuScene.js',
