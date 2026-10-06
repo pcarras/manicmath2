@@ -28,10 +28,10 @@ jobs:
     env:
       HAS_PLAY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '17' }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: '22' }
       - name: Install Bubblewrap
         run: |
@@ -79,8 +79,15 @@ jobs:
       - name: Build the Android App Bundle
         run: |
           cd android
-          bubblewrap update --skipVersionUpgrade --manifest=./twa-manifest.json
-          bubblewrap build --skipPwaValidation --manifest=./twa-manifest.json
+          run() {
+            if ! "$@" > step.log 2>&1 < /dev/null; then
+              echo "::error::$1 $2 failed: $(tail -c 2500 step.log | tr '\n' ' ')"
+              exit 1
+            fi
+            tail -n 5 step.log
+          }
+          run bubblewrap update --skipVersionUpgrade --manifest=./twa-manifest.json
+          run bubblewrap build --skipPwaValidation --manifest=./twa-manifest.json
           ls -la *.aab *.apk
       - uses: actions/upload-artifact@v4
         with:
