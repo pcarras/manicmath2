@@ -1,0 +1,1 @@
+Junta números e operadores antes que a pilha chegue à linha. Desafio diário!

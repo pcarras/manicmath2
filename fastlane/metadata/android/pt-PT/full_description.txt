@@ -1,0 +1,39 @@
+Peças numeradas caem do céu. Toca em dois números e num operador para fazer o resultado que aparece no topo, antes que a pilha chegue à linha vermelha.
+
+Parece fácil. Ao fim de uns níveis, as peças caem mais depressa, aparecem a multiplicação e a divisão, e algumas peças começam a gelar e a esconder o número.
+
+COMO SE JOGA
+• Toca em 2 números e 1 operador, por qualquer ordem
+• Acerta no resultado e as peças rebentam
+• Encadeia contas seguidas para fazer combos até x4
+• Não deixes a pilha chegar à linha vermelha
+
+PEÇAS ESPECIAIS
+• Bomba: rebenta tudo à volta
+• Relógio: pára a queda durante 20 segundos
+• Lâmpada: mostra uma solução
+• Reciclar: raios que levam várias peças e mudam o resultado
+• Calor: uma onda quente derrete o gelo das peças
+
+TODOS OS DIAS HÁ ALGO NOVO
+• Desafio diário: o mesmo jogo para toda a gente, com ranking
+• Sequência de dias com chávenas de café e prémios
+• 3 missões novas por dia
+• Partilha o teu resultado com os amigos
+
+MODOS
+• Clássico: até a pilha chegar à linha
+• Zen: sem linha vermelha, para treinar com calma
+• Sprint 60s: o máximo de contas num minuto
+
+E AINDA
+• Temas para as peças: Clássico, Neon, Retro Pixel e Bica, comprados com grãos de café ganhos a jogar
+• 16 conquistas
+• Música que acelera com o jogo
+• Modo de alto contraste e opção de menos animação
+• Funciona sem internet (exceto o ranking)
+• Sem anúncios e sem compras com dinheiro real
+
+Bom para treinar o cálculo mental, para miúdos e graúdos.
+
+Feito em Portugal pela Bica Games. Bica é o nome do café expresso em Lisboa.
