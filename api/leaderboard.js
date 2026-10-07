@@ -1,8 +1,10 @@
 // Rankings, stored in Upstash Redis through its REST API (no SDK needed).
 // Vercel sets KV_REST_API_URL / KV_REST_API_TOKEN when the Upstash database is connected.
 //
-// Boards: daily (one per UTC day, kept 8 days), classic and sprint (best ever, one row per player).
-// GET  /api/leaderboard?board=daily|classic|sprint&date=YYYY-MM-DD&id=<player>
+// Boards: daily (one per UTC day, kept 8 days), classic (best ever, one row per player) and week
+// (classic scores of the current UTC week, Monday to Sunday; filled by every classic POST).
+// sprint is kept only for older clients.
+// GET  /api/leaderboard?board=daily|classic|week&date=YYYY-MM-DD&id=<player>
 //      -> { board, date, top: [{ name, score, me }], me: { rank, score } | null }
 // POST /api/leaderboard { board, date, id, name, score }  (name checked by js/namefilter.js)
 //      -> same shape after saving; 422 { error: 'name', reason } when the name is refused
@@ -16,7 +18,7 @@ const NOUNS = ['Bica', 'Galão', 'Pastel', 'Garoto', 'Cimbalino', 'Abatanado', '
 const ADJS = ['Veloz', 'Turbo', 'Genial', 'Ninja', 'Feroz', 'Audaz', 'Sagaz', 'Imparável', 'Incrível', 'Radical'];
 
 // Far above what a real game reaches; filters obvious fakes
-const MAX_SCORE = { daily: 200000, sprint: 150000, classic: 3000000 };
+const MAX_SCORE = { daily: 200000, sprint: 150000, classic: 3000000, week: 3000000 };
 const TOP = 50;
 const NAMES = 'lbname';   // player id -> name, shared by every board
 
@@ -36,7 +38,14 @@ async function redis(commands) {
     return (await r.json()).map((x) => x.result);
 }
 
-const boardKey = (board, date) => (board === 'daily' ? `lb:${date}` : `lb:${board}`);
+// Monday (UTC) of the current week, e.g. 2026-10-05
+function weekStart() {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    return d.toISOString().slice(0, 10);
+}
+
+const boardKey = (board, date) => (board === 'daily' ? `lb:${date}` : board === 'week' ? `lb:week:${weekStart()}` : `lb:${board}`);
 
 async function read(board, date, id) {
     const key = boardKey(board, date);
@@ -56,13 +65,13 @@ async function read(board, date, id) {
     }
     return {
         board,
-        date,
+        date: board === 'week' ? weekStart() : date,
         top: ids.map((pid, i) => ({ name: names[i], score: scores[i], me: pid === id })),
         me: id && rank !== null && rank !== undefined ? { rank: rank + 1, score: Number(score) } : null
     };
 }
 
-const validBoard = (b) => b === 'daily' || b === 'classic' || b === 'sprint';
+const validBoard = (b) => b === 'daily' || b === 'classic' || b === 'week' || b === 'sprint';
 const validDate = (d) => d === today() || d === today(-1);
 const validId = (id) => typeof id === 'string' && /^[a-z0-9]{16}$/.test(id);
 const idx = (v, list) => Number.isInteger(v) && v >= 0 && v < list.length;
@@ -83,7 +92,7 @@ export default async function handler(req, res) {
         }
         if (req.method === 'POST') {
             const b = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-            const board = validBoard(b.board) ? b.board : 'daily';
+            const board = validBoard(b.board) && b.board !== 'week' ? b.board : 'daily';
             const date = board === 'daily' ? b.date : today();
             const { id, score } = b;
             if ((board === 'daily' && !validDate(date)) || !validId(id)
@@ -111,6 +120,10 @@ export default async function handler(req, res) {
                 ['HSET', NAMES, id, name]
             ];
             if (board === 'daily') cmds.push(['EXPIRE', key, String(60 * 60 * 24 * 8)]);
+            if (board === 'classic' && !b.sync) {
+                const wk = boardKey('week');
+                cmds.push(['ZADD', wk, 'GT', String(score), id], ['EXPIRE', wk, String(60 * 60 * 24 * 15)]);
+            }
             await redis(cmds);
             res.status(200).json(await read(board, date, id));
             return;

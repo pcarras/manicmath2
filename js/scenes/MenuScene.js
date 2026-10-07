@@ -5,9 +5,8 @@ import { t } from '../i18n.js';
 import { isDebug, toggleDebug, settings } from '../settings.js';
 import { stats, daily } from '../stats.js';
 import { chunkyButton, roundButton, openSettings, modal } from '../ui.js';
-import { view, setupCamera } from '../display.js';
+import { view, setupCamera, PHONE } from '../display.js';
 import { beans, onProgressChange, streakInfo, missions, missionText } from '../progress.js';
-import { modeBest } from '../stats.js';
 import { syncBests } from '../ranking.js';
 import { ensureTextures } from '../textures.js';
 import { createTitle, createPieceRain } from '../title.js';
@@ -108,7 +107,7 @@ export class MenuScene extends Phaser.Scene {
 
         // Modes | Training side by side
         const half = (bw - 10) / 2;
-        chunkyButton(this, w / 2 - half / 2 - 5, y, t('modes'), 0xf59e0b, () => this.openModes(),
+        chunkyButton(this, w / 2 - half / 2 - 5, y, t('twoPlayers'), 0xf59e0b, go('MultiScene'),
             { width: half, height: 50, fontSize: half < 110 ? 17 : 20, delay: 340 });
         chunkyButton(this, w / 2 + half / 2 + 5, y, t('training'), 0x0ea5e9, go('TrainingScene'),
             { width: half, height: 50, fontSize: half < 110 ? 17 : 20, delay: 360 });
@@ -136,7 +135,7 @@ export class MenuScene extends Phaser.Scene {
         this.installBtn = null;
         const installY = y;
         const refreshInstall = () => {
-            const mode = installMode();
+            const mode = PHONE ? null : installMode();   // no install / fullscreen inside the desktop test frame
             const label = mode === 'fullscreen' ? t('fullscreen') : t('install');
             if (this.installBtn && (!mode || this.installBtn.labelText !== label)) {
                 this.installBtn.destroy();
@@ -192,32 +191,6 @@ export class MenuScene extends Phaser.Scene {
                 this.tweens.add({ targets: note, alpha: 0, delay: 600, duration: 300 });
             }
         });
-    }
-
-    // Game modes: classic, zen, sprint and the tutorial
-    openModes() {
-        const rows = [
-            ['classic', 'classicDesc', 0x22c55e, () => ({ mode: 'classic' })],
-            ['zen', 'zenDesc', 0x0d9488, () => ({ mode: 'zen' })],
-            ['sprint', 'sprintDesc', 0xef4444, () => ({ mode: 'sprint' })],
-            ['tutorial', 'howToDesc', 0xf59e0b, () => ({ tutorial: true })]
-        ];
-        const m = modal(this, { depth: 700, height: 96 + rows.length * 84 + 70, title: t('modes') });
-        const { panel } = m;
-        let y = panel.y + 104;
-        const sprintBest = modeBest.get('sprint');
-        rows.forEach(([key, desc, color, data]) => {
-            m.add(chunkyButton(this, panel.cx, y, t(key), color, () => { m.close(); this.go('GameScene', data)(); },
-                { width: Math.min(240, panel.w - 48), height: 46, fontSize: 20, depth: m.depth, enter: false }));
-            let sub = t(desc);
-            if (key === 'sprint' && sprintBest > 0) sub += `  ·  🏆 ${sprintBest}`;
-            m.add(this.add.text(panel.cx, y + 36, sub, {
-                fontFamily: 'Roboto', fontSize: '13px', color: '#c9c7ee', align: 'center', wordWrap: { width: panel.w - 40 }
-            }).setOrigin(0.5).setDepth(m.depth));
-            y += 84;
-        });
-        m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 40, t('close'), 0x6366f1, () => m.close(),
-            { width: 160, height: 44, fontSize: 20, depth: m.depth, enter: false }));
     }
 
     // Today's missions + the streak calendar (last 7 days)

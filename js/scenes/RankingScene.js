@@ -9,10 +9,10 @@ import { fetchBoard } from '../ranking.js';
 import { askName } from '../nameDialog.js';
 
 const ROW_H = 44;
-const BOARDS = ['daily', 'classic', 'sprint'];
-const TAB_KEYS = { daily: 'boardDaily', classic: 'boardClassic', sprint: 'boardSprint' };
+const BOARDS = ['week', 'classic', 'daily'];
+const TAB_KEYS = { daily: 'boardDaily', classic: 'boardAllTime', week: 'boardWeek' };
 
-// Rankings: today's daily challenge, and the best ever classic and sprint scores.
+// Rankings of the classic game: this week and best ever, plus today's daily challenge.
 // The list scrolls like the achievements screen; header (tabs + name) and footer stay fixed.
 export class RankingScene extends Phaser.Scene {
     constructor() {
@@ -20,7 +20,7 @@ export class RankingScene extends Phaser.Scene {
     }
 
     init(data) {
-        this.board = BOARDS.includes(data && data.board) ? data.board : 'daily';
+        this.board = BOARDS.includes(data && data.board) ? data.board : 'week';
     }
 
     create() {
@@ -50,7 +50,7 @@ export class RankingScene extends Phaser.Scene {
                 () => { if (!on) this.scene.restart({ board: b }); },
                 { width: tabW, height: 38, fontSize: 15, depth: 52, enter: false }).setScrollFactor(0);
         });
-        this.add.text(w / 2, top + 112, this.board === 'daily' ? todayKey() : t('rankingAllTime'), {
+        this.add.text(w / 2, top + 112, this.board === 'daily' ? `${t('daily')} · ${todayKey()}` : this.board === 'week' ? t('rankingWeek') : t('rankingAllTime'), {
             fontFamily: 'Roboto', fontSize: '12px', color: '#a5a8ff'
         }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
 

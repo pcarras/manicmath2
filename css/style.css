@@ -38,6 +38,25 @@ body {
     overflow: hidden;
 }
 
+/* Desktop testing: the game in a phone-sized frame (see display.js PHONE) */
+body.phone-frame {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: radial-gradient(circle at 50% 40%, #1b1440, #05060f 70%);
+}
+
+body.phone-frame #game-container {
+    width: 390px;
+    height: 844px;
+    flex: none;
+    border-radius: 44px;
+    box-shadow: 0 0 0 12px #111018, 0 0 0 14px #2c2a3a, 0 30px 80px rgba(0, 0, 0, 0.7);
+    transform: scale(var(--phone-k, 1));
+    transform-origin: center center;
+}
+
 /* Enhancements for Fullscreen PWA experience */
 canvas {
     display: block;

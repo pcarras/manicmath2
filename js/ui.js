@@ -191,7 +191,8 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         const first = !m;
         if (m) m.close();
         const ROW = 52;
-        m = modal(scene, { depth, height: 100 + ROW * 8 + 76, title: t('settings'), fade: first });
+        const inMenu = scene.scene.key === 'MenuScene';
+        m = modal(scene, { depth, height: 100 + ROW * (inMenu ? 9 : 8) + 76, title: t('settings'), fade: first });
         const { panel } = m;
         let y = panel.y + 96;
         ['music', 'sfx', 'vibration'].forEach((key) => {
@@ -229,6 +230,11 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         y += ROW;
         // Gameplay options being tested
         toggleRow(scene, m, y, t('tests'), t('open'), true, () => openTests(scene, { depth: depth + 40 }));
+        // The tutorial used to live in the old MODES menu
+        if (inMenu) {
+            y += ROW;
+            toggleRow(scene, m, y, t('tutorial'), t('open'), true, () => { m.close(); scene.scene.start('GameScene', { tutorial: true }); });
+        }
         m.add(chunkyButton(scene, panel.cx, panel.y + panel.h - 42, t('close'), 0x6366f1, () => {
             m.close();
             if (settings.get('graphics') !== startGraphics) {

@@ -43,10 +43,12 @@ export class GameScene extends Phaser.Scene {
         // Daily challenge: same pieces and targets for everyone today (separate seeded streams so one
         // player's actions never shift the sequence), time attack, all operators from the start
         this.daily = !this.tutorial && !!(data && data.daily);
-        // classic | daily | zen (no death line) | sprint (60 s time attack)
-        this.mode = this.tutorial ? 'tutorial' : this.daily ? 'daily' : (data && data.mode) || 'classic';
-        this.zen = this.mode === 'zen';
-        this.sprint = this.mode === 'sprint';
+        // tutorial | daily | classic, or a two-player game: team | duel (see net.js)
+        const asked = data && data.mode;
+        this.mode = this.tutorial ? 'tutorial' : this.daily ? 'daily' : (asked === 'team' || asked === 'duel') ? asked : 'classic';
+        // Zen and Sprint were retired; the flags stay false so the shared code paths read simply
+        this.zen = false;
+        this.sprint = false;
         this.timed = this.daily || this.sprint;
         this.dailyKey = todayKey();
         this.dailyRemaining = this.sprint ? SPRINT_MS : DAILY_MS;
@@ -57,8 +59,19 @@ export class GameScene extends Phaser.Scene {
         this.energyOn = !this.tutorial && !!settings.get('energy');
         this.energy = 0;                   // 0..1
         this.chooser = null;
-        this.pieceRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-pieces`]) : null;
-        this.targetRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-targets`]) : null;
+        // Two players (net.js): the room seed gives both phones the same pieces, numbered in order
+        this.room = (this.mode === 'team' || this.mode === 'duel') && data && data.room ? data.room : null;
+        this.multi = !!this.room;
+        if (!this.multi && (this.mode === 'team' || this.mode === 'duel')) this.mode = 'classic';
+        this.team = this.multi && this.mode === 'team';
+        this.duel = this.multi && this.mode === 'duel';
+        this.seqN = 0;              // order number of each seeded piece (the same piece on both phones)
+        this.round = 0;             // team: equations solved by the team so far
+        this.lastSolve = null;      // team: my last solve { round, target, i } to settle ties
+        this.mate = { score: 0, solved: 0 };   // the other player's points and equations
+        const seedKey = this.daily ? `mm-${this.dailyKey}` : this.multi ? `mm-room-${this.room.seed}` : null;
+        this.pieceRng = seedKey ? new Phaser.Math.RandomDataGenerator([`${seedKey}-pieces`]) : null;
+        this.targetRng = seedKey ? new Phaser.Math.RandomDataGenerator([`${seedKey}-targets`]) : null;
         this.level = 1;
         this.solved = 0;
         this.combo = 0;
@@ -187,6 +200,12 @@ export class GameScene extends Phaser.Scene {
 
         if (this.tutorial) {
             this.startTutorial();
+            this.gameStarted = true;
+        } else if (this.multi) {
+            // The lobby already counted down together: go straight in
+            this.prefill();
+            this.newTarget();
+            this.setupMulti();
             this.gameStarted = true;
         } else {
             this.prefill();
@@ -321,7 +340,7 @@ export class GameScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(101));
 
         // Pause button + power-up badges (top right)
-        hud(roundButton(this, w - 32, top + 29, 'pause', () => this.pauseGame(), { radius: 16 }));
+        hud(roundButton(this, w - 32, top + 29, 'pause', () => (this.multi ? this.confirmLeave() : this.pauseGame()), { radius: 16 }));
         this.timerBadge = hud(this.createBadge(w - 92, 'piece_special_timer', '#60a5fa'));
         this.hintBadge = hud(this.createBadge(w - 152, 'piece_special_hint', '#34D399'));
 
@@ -572,6 +591,8 @@ export class GameScene extends Phaser.Scene {
             this.tweens.add({ targets: this.nextIcon, scale: 24 / TEX_PX, duration: 220, ease: 'Back.easeOut' });
         }
 
+        if (this.multi) this.spawnDelay = this.levelSpawnDelay(this.mpStage());
+
         // Spawning never stops, except while the timer power-up is active
         if (this.timerRemaining > 0) {
             this.timerRemaining -= delta;
@@ -747,6 +768,7 @@ export class GameScene extends Phaser.Scene {
         else data = { type: 'operator', value: this.pick(rng, this.allowedOps()) };
         if (data.type !== 'special') data.iceRoll = this.rand(rng) < ICE_CHANCE;
         data.fx = this.rand(rng);   // spawn column as a fraction of the width
+        if (this.multi) data.seq = this.seqN++;
         return data;
     }
 
@@ -968,6 +990,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     onSuccess() {
+        const usedSeqs = this.slots.filter((p) => p && p.seq !== undefined).map((p) => p.seq);
+        const scoreBefore = this.score;
         this.playSound('popSound', 0.8);
         this.sfx.rise(this.combo);   // combo before this equation: the chime climbs as the chain grows
         haptic('success');
@@ -1015,6 +1039,7 @@ export class GameScene extends Phaser.Scene {
         this.crackJunk();
         if (this.energyOn) this.gainEnergy(this.combo >= 2 ? 0.3 : 0.2);
         this.newTarget();
+        if (this.multi) this.sendSolve(usedSeqs, this.score - scoreBefore);
         this.checkLevelUp();
     }
 
@@ -1140,7 +1165,9 @@ export class GameScene extends Phaser.Scene {
     newTarget() {
         const pool = this.reachablePieces();
         const rng = this.targetRng;
-        let target = !this.daily && Math.random() < 0.7 ? this.targetFrom(pool) : null;
+        // Seeded target when it must match other phones: the daily, and the first target of a 2-player game
+        const shared = this.daily || (this.multi && !this.gameStarted);
+        let target = !shared && Math.random() < 0.7 ? this.targetFrom(pool) : null;
         if (target === null) {
             let r;
             do {
@@ -1639,6 +1666,10 @@ export class GameScene extends Phaser.Scene {
         this.scoreText.setText(String(this.score));
         this.tweens.add({ targets: this.scoreText, scale: 1.25, duration: 120, yoyo: true });
         this.createFloatingText(x, y, (amount > 0 ? '+' : '') + amount, color);
+        if (this.multi) {
+            this.updateMpHud();
+            this.queueScoreSync();
+        }
     }
 
     createFloatingText(x, y, message, color) {
@@ -1801,9 +1832,218 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
+
+    // ------------------------------------------------------------------ two players (net.js)
+
+    mateName() {
+        const o = this.room.other();
+        return o ? o.name : '?';
+    }
+
+    setupMulti() {
+        const room = this.room;
+        this.mpText = this.add.text(this.w / 2, this.uiHeight + 14, '', {
+            fontFamily: 'Righteous', fontSize: '14px', color: '#ffffff', stroke: '#1b0f2e', strokeThickness: 4,
+            backgroundColor: 'rgba(11,6,32,0.55)', padding: { x: 8, y: 3 }
+        }).setOrigin(0.5).setDepth(150);
+        this.updateMpHud();
+        const offEv = room.onEvent((ev) => this.onNet(ev));
+        const offState = room.onState(({ players, failures }) => {
+            if (this.gameOver) return;
+            const o = players[1 - room.me];
+            if ((o && !o.here) || failures > 20) this.endGame('left');
+        });
+        room.start();
+        this.events.once('shutdown', () => {
+            offEv();
+            offState();
+            clearTimeout(this.scoreSyncTimer);
+            // Give the last event a moment to go out before leaving the room
+            setTimeout(() => room.close(), 1500);
+        });
+    }
+
+    updateMpHud() {
+        if (!this.mpText) return;
+        const me = t('you');
+        const mate = this.mateName();
+        this.mpText.setText(this.team
+            ? `🤝 ${t('teamShort')} ${this.score + this.mate.score}  ·  ${me} ${this.score}  ·  ${mate} ${this.mate.score}`
+            : `⚔️ ${me} ${this.score}   ${t('vs')}   ${mate} ${this.mate.score}`);
+    }
+
+    // The other phone shows my score: send it now and then (solves already carry it)
+    queueScoreSync() {
+        if (this.scoreSyncTimer || this.gameOver) return;
+        this.scoreSyncTimer = setTimeout(() => {
+            this.scoreSyncTimer = null;
+            if (!this.gameOver) this.room.send({ type: 'score', score: this.score });
+        }, 1500);
+    }
+
+    sendSolve(seqs, pts) {
+        if (this.team) {
+            const round = this.round;
+            this.round++;
+            const mine = { round, target: this.target, i: Infinity };
+            this.lastSolve = mine;
+            this.room.send({ type: 'solve', round, seqs, target: this.target, pts, score: this.score }).then((i) => {
+                if (i !== null) mine.i = i;
+            });
+        } else {
+            // Duel: every equation sends steel junk to the other board (two on a hot combo)
+            this.room.send({ type: 'junk', n: this.combo >= 3 ? 2 : 1, score: this.score });
+            this.mpNotice(t('junkSent'), '#ffd23f');
+        }
+    }
+
+    onNet(ev) {
+        if (this.gameOver) return;
+        if (ev.score !== undefined) this.mate.score = ev.score;
+        if (ev.type === 'solve' && this.team) this.mateSolved(ev);
+        else if (ev.type === 'junk' && this.duel) {
+            this.dropJunk(ev.n || 1);
+            this.mpNotice(t('junkFrom', { name: this.mateName() }), '#ff9a9a');
+            haptic('fail');
+        } else if (ev.type === 'over') this.endGame('mateOver');
+        else if (ev.type === 'leave') this.endGame('left');
+        this.updateMpHud();
+    }
+
+    // Team: the other player solved. Their pieces vanish here too and their next target is shared.
+    mateSolved(ev) {
+        this.mate.solved++;
+        const used = new Set(ev.seqs || []);
+        if (this.slots.some((p) => p && used.has(p.seq))) for (let i = 0; i < 3; i++) this.deselect(i);
+        for (const p of [...this.pieces]) {
+            if (p.seq !== undefined && used.has(p.seq)) {
+                this.tintBurst(p.color);
+                this.burst.emitParticleAt(p.img.x, p.img.y, 8);
+                this.removePiece(p);
+            }
+        }
+        const adopt = () => {
+            if (ev.target && ev.target !== this.target) {
+                this.setTarget(ev.target);
+                this.spawnQueue = this.missingPiecesFor(ev.target, this.reachablePieces());
+                this.forceQueue = false;
+            }
+        };
+        if (ev.round === this.round) {
+            this.round++;
+            adopt();
+        } else if (this.lastSolve && ev.round === this.lastSolve.round && ev.i < this.lastSolve.i) {
+            // Both solved the same round: the one the server got first chooses the next target
+            adopt();
+        }
+        this.mpNotice(`${this.mateName()} +${ev.pts || 0}`, '#4ade80');
+        this.sfx.rise(3);
+        // Team levels count everyone's equations
+        this.solved++;
+        this.checkLevelUp();
+        this.ensureSolvable();
+    }
+
+    mpNotice(text, color) {
+        const y = this.uiHeight + 42;
+        const label = this.add.text(this.w / 2, y, text, {
+            fontFamily: 'Righteous', fontSize: '18px', color, stroke: '#1b0f2e', strokeThickness: 5
+        }).setOrigin(0.5).setDepth(216).setAlpha(0);
+        this.tweens.add({ targets: label, alpha: 1, y: y + 6, duration: 180 });
+        this.tweens.add({ targets: label, alpha: 0, delay: 1300, duration: 300, onComplete: () => label.destroy() });
+    }
+
+    confirmLeave() {
+        if (this.gameOver || this.leaveUI) return;
+        const m = modal(this, { depth: 700, height: 230, title: t('leaveGame') });
+        this.leaveUI = m;
+        const { panel, depth } = m;
+        const bw = Math.min(120, (panel.w - 60) / 2);
+        m.add(chunkyButton(this, panel.cx - bw / 2 - 8, panel.y + panel.h - 50, t('no'), 0x22c55e, () => { m.close(); this.leaveUI = null; },
+            { width: bw, height: 48, fontSize: 20, depth, enter: false }));
+        m.add(chunkyButton(this, panel.cx + bw / 2 + 8, panel.y + panel.h - 50, t('yes'), 0xef4444, () => {
+            m.close();
+            this.leaveUI = null;
+            this.endGame('quit');
+        }, { width: bw, height: 48, fontSize: 20, depth, enter: false }));
+    }
+
+    // Two-player end. reason: undefined (my board overflowed), 'quit', 'mateOver', 'left'
+    endMulti(reason) {
+        this.gameOver = true;
+        this.endReason = reason;
+        if (this.leaveUI) { this.leaveUI.close(); this.leaveUI = null; }
+        const mine = reason === undefined || reason === 'quit';
+        if (mine) this.room.send({ type: 'over', score: this.score });
+        else if (this.scoreSyncTimer) clearTimeout(this.scoreSyncTimer);
+        this.matter.world.pause();
+        this.music.stop();
+        this.sfx.stopAll();
+        this.pieces.forEach((p) => this.clearFuse(p));
+        haptic('gameOver');
+        const bonus = Math.floor(this.score / 500);
+        if (bonus) addBeans(bonus);
+        const beans = this.beansEarned + bonus;
+        let outcome;
+        if (this.team) outcome = 'team';
+        else outcome = mine ? 'lost' : 'won';
+        this.toastMissions(track('gameOver', { score: this.score, level: this.level, mode: this.mode }));
+        this.gameOverCascade(() => this.showMultiPanel(outcome, reason, beans));
+    }
+
+    showMultiPanel(outcome, reason, beans) {
+        const m = modal(this, { depth: 700, height: 470 });
+        const { panel, depth } = m;
+        const D = (o) => m.add(o.setDepth(depth));
+        const mate = this.mateName();
+        const title = outcome === 'team' ? t('teamOver') : outcome === 'won' ? t('youWon') : t('youLost');
+        D(this.add.text(panel.cx, panel.y + 46, title, {
+            fontFamily: 'Righteous', fontSize: '34px', color: outcome === 'lost' ? '#f87171' : '#ffd23f',
+            stroke: '#1b0f2e', strokeThickness: 7
+        }).setOrigin(0.5));
+        if (reason === 'left') {
+            D(this.add.text(panel.cx, panel.y + 84, t('mateLeft', { name: mate }), {
+                fontFamily: 'Roboto', fontSize: '13px', color: '#c4c6f5'
+            }).setOrigin(0.5));
+        }
+        let y = panel.y + 120;
+        if (outcome === 'team') {
+            D(this.add.text(panel.cx, y, `${t('teamShort')}: ${this.score + this.mate.score}`, {
+                fontFamily: 'Righteous', fontSize: '28px', color: '#ffffff'
+            }).setOrigin(0.5));
+            y += 46;
+        }
+        const rows = [[t('you'), this.score, this.solved - (this.team ? this.mate.solved : 0)], [mate, this.mate.score, this.mate.solved]];
+        rows.forEach(([name, pts, eq]) => {
+            D(this.add.text(panel.cx, y, name, { fontFamily: 'Righteous', fontSize: '17px', color: '#ffffff' }).setOrigin(0.5));
+            const detail = this.team ? `${pts} ${t('ptsShort')}  ·  ${eq} ${t(eq === 1 ? 'eqOne' : 'eqShort')}` : `${pts} ${t('ptsShort')}`;
+            D(this.add.text(panel.cx, y + 22, detail, { fontFamily: 'Righteous', fontSize: '16px', color: '#ffd9a8' }).setOrigin(0.5));
+            y += 52;
+        });
+        if (outcome === 'team') {
+            const diff = this.score - this.mate.score;
+            const helper = diff === 0 ? t('helpedTie') : t('helpedMost', { name: diff > 0 ? t('you') : mate });
+            D(this.add.text(panel.cx, y + 4, `🏅 ${helper}`, {
+                fontFamily: 'Righteous', fontSize: '18px', color: '#4ade80', align: 'center', wordWrap: { width: panel.w - 40 }
+            }).setOrigin(0.5));
+        }
+        if (beans > 0) {
+            D(this.add.text(panel.cx, panel.y + panel.h - 112, t(beans === 1 ? 'earnedOne' : 'earned', { n: beans }), {
+                fontFamily: 'Righteous', fontSize: '15px', color: '#e8b878'
+            }).setOrigin(0.5));
+        }
+        if (outcome !== 'lost') this.celebrate();
+        const bw = Math.min(140, (panel.w - 60) / 2);
+        m.add(chunkyButton(this, panel.cx - bw / 2 - 8, panel.y + panel.h - 54, t('twoPlayersShort'), 0xf59e0b,
+            () => this.scene.start('MultiScene'), { width: bw, height: 50, fontSize: 18, depth, enter: false }));
+        m.add(chunkyButton(this, panel.cx + bw / 2 + 8, panel.y + panel.h - 54, t('menu'), 0x6366f1,
+            () => this.scene.start('MenuScene'), { width: bw, height: 50, fontSize: 18, depth, enter: false }));
+    }
+
     // ------------------------------------------------------------------ pause
 
     pauseGame() {
+        if (this.multi) return;   // the other player keeps playing: no pause (the button offers to leave)
         if (this.paused || this.gameOver || !this.gameStarted || this.replay) return;
         this.paused = true;
         this.matter.world.pause();
@@ -2060,7 +2300,15 @@ export class GameScene extends Phaser.Scene {
     }
 
     allowedOps() {
+        if (this.multi) return LEVELS.ops(this.mpStage());
         return this.tutorial || this.daily ? OPS : LEVELS.ops(this.level);
+    }
+
+    // Two players: operators and spawn speed follow the time since the shared start (every 40 s),
+    // so both phones always draw the same pieces at the same pace
+    mpStage() {
+        if (!this.room || !this.room.startAt) return 1;
+        return 1 + Math.max(0, Math.floor((this.room.serverNow() - this.room.startAt) / 40000));
     }
 
     // Random helpers that use a seeded stream in the daily challenge, Math.random otherwise
@@ -2160,8 +2408,8 @@ export class GameScene extends Phaser.Scene {
         if (this.solved % LEVELS.EQUATIONS_PER_LEVEL !== 0) return;
         const before = LEVELS.ops(this.level);
         this.level++;
-        this.spawnDelay = this.levelSpawnDelay(this.level);
-        const newOp = this.daily ? null : LEVELS.ops(this.level).find((op) => !before.includes(op));
+        if (!this.multi) this.spawnDelay = this.levelSpawnDelay(this.level);
+        const newOp = this.daily || this.multi ? null : LEVELS.ops(this.level).find((op) => !before.includes(op));
         this.showLevelUp(newOp);
         this.updateLevelHud();
         this.music.setLevel(this.level);
@@ -2336,6 +2584,10 @@ export class GameScene extends Phaser.Scene {
 
     endGame(reason) {
         if (this.gameOver) return;
+        if (this.multi) {
+            this.endMulti(reason);
+            return;
+        }
         this.gameOver = true;
         this.endReason = reason;
         if (this.chooser) {

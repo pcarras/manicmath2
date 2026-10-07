@@ -1,6 +1,6 @@
 // Daily ranking client + Wordle-style result sharing.
 import { player } from './progress.js';
-import { stats, modeBest } from './stats.js';
+import { stats } from './stats.js';
 import { t, lang } from './i18n.js';
 
 const API = 'api/leaderboard';
@@ -18,20 +18,20 @@ async function call(init, query = '') {
     }
 }
 
-// board: 'daily' (needs the date), 'classic' or 'sprint'
+// board: 'daily' (needs the date), 'classic' or 'week'
 export function fetchBoard(board, date) {
     const p = player();
     return call({}, `?board=${board}&date=${date || ''}&id=${p.id}`);
 }
 
 // A refused name comes back as { ok: false, reason: 'name' }
-export async function submitScore(board, score, date) {
+export async function submitScore(board, score, date, extra = {}) {
     const p = player();
     const who = p.custom ? { name: p.custom } : { n: p.n, a: p.a, num: p.num };
     const r = await call({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ board, date, id: p.id, score, ...who })
+        body: JSON.stringify({ board, date, id: p.id, score, ...who, ...extra })
     });
     return r;
 }
@@ -43,10 +43,10 @@ const SYNC_KEY = 'mm-synced';
 export async function syncBests() {
     let synced = {};
     try { synced = JSON.parse(localStorage.getItem(SYNC_KEY) || '{}'); } catch { /* reset */ }
-    const bests = { classic: stats.get().best, sprint: modeBest.get('sprint') };
+    const bests = { classic: stats.get().best };
     for (const [board, best] of Object.entries(bests)) {
         if (!(best > 0) || best <= (synced[board] || 0)) continue;
-        const r = await submitScore(board, best);
+        const r = await submitScore(board, best, undefined, { sync: true });   // old bests stay out of this week's board
         if (!r.ok) return;   // offline / not configured: try again next time
         synced[board] = best;
         try { localStorage.setItem(SYNC_KEY, JSON.stringify(synced)); } catch { /* private mode */ }
