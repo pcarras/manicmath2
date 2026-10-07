@@ -227,7 +227,200 @@ function paintBeach(ctx, w, h) {
     });
 }
 
-const PAINT = { lisbon: paintLisbon, ocean: paintOcean, beach: paintBeach };
+
+// Porto at night: Ribeira houses climbing the hill, the Clérigos tower, the iron arch of the
+// D. Luís I bridge over the Douro and a rabelo boat
+function paintPorto(ctx, w, h) {
+    vertical(ctx, w, h, [[0, '#060a22'], [0.55, '#1c1a4a'], [0.75, '#3b2650'], [1, '#081028']]);
+    stars(ctx, w, h, (w * h) / 3000, h * 0.45);
+    glow(ctx, w * 0.18, h * 0.12, 70, 'rgba(255,240,200,0.3)');
+    ctx.fillStyle = '#fff4d6';
+    ctx.beginPath(); ctx.arc(w * 0.18, h * 0.12, 16, 0, Math.PI * 2); ctx.fill();
+    const river = h * 0.84;
+    // Hill (Ribeira side, left) and Gaia (right)
+    ctx.fillStyle = '#1a1838';
+    ctx.beginPath();
+    ctx.moveTo(0, river); ctx.lineTo(0, h * 0.5);
+    ctx.quadraticCurveTo(w * 0.35, h * 0.5, w * 0.62, river);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(w, river); ctx.lineTo(w, h * 0.66);
+    ctx.quadraticCurveTo(w * 0.85, h * 0.68, w * 0.72, river);
+    ctx.fill();
+    // Clérigos tower on the hilltop
+    const tx = w * 0.2;
+    const ty = h * 0.5;
+    ctx.fillStyle = '#2b2752';
+    ctx.fillRect(tx - 9, ty - 90, 18, 90);
+    ctx.fillRect(tx - 12, ty - 60, 24, 6);
+    ctx.beginPath(); ctx.moveTo(tx - 9, ty - 90); ctx.quadraticCurveTo(tx, ty - 120, tx + 9, ty - 90); ctx.fill();
+    ctx.fillRect(tx - 1.5, ty - 132, 3, 14);
+    glow(ctx, tx, ty - 70, 50, 'rgba(255,200,120,0.15)');
+    // Ribeira: tall narrow colourful houses stepping down to the river
+    const cols = ['#7a2f3a', '#2f5a7a', '#8a6a2a', '#5a3a7a', '#2f6a55', '#8a3f2a'];
+    for (let r = 0; r < 5; r++) {
+        const base = h * (0.6 + r * 0.05);
+        let x = -5;
+        const end = w * (0.32 + r * 0.06);
+        while (x < end) {
+            const bw = rand(12, 20);
+            const bh = rand(26, 40);
+            ctx.fillStyle = cols[Math.floor(rand(0, cols.length))];
+            ctx.globalAlpha = 0.75;
+            ctx.fillRect(x, base - bh, bw, bh + 20);
+            ctx.globalAlpha = 1;
+            for (let wy = base - bh + 5; wy < base - 3; wy += 9) {
+                if (Math.random() < 0.55) {
+                    ctx.fillStyle = 'rgba(255,205,110,0.9)';
+                    ctx.fillRect(x + bw / 2 - 2, wy, 4, 5);
+                }
+            }
+            x += bw + 1;
+        }
+    }
+    // River
+    vertical(ctx, w, h, [[0, 'rgba(0,0,0,0)'], [0.84, 'rgba(0,0,0,0)'], [0.841, '#0c1634'], [1, '#050a1c']]);
+    for (let i = 0; i < 60; i++) {
+        ctx.fillStyle = `rgba(255,200,120,${rand(0.08, 0.3).toFixed(2)})`;
+        ctx.fillRect(rand(0, w), rand(river + 4, h - 4), rand(6, 16), 1.5);
+    }
+    // D. Luís I bridge: a big iron arch with the upper deck on top and the lower deck at the river
+    const L = w * 0.4;
+    const Rr = w * 0.98;
+    const mid = (L + Rr) / 2;
+    const topDeck = h * 0.64;
+    ctx.strokeStyle = '#4a4a62';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(w * 0.3, topDeck); ctx.lineTo(w * 1.05, topDeck); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(L, river - 14); ctx.lineTo(Rr, river - 14); ctx.stroke();
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(L, river); ctx.quadraticCurveTo(mid, h * 0.5, Rr, river); ctx.stroke();
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(L + 10, river); ctx.quadraticCurveTo(mid, h * 0.54, Rr - 10, river); ctx.stroke();
+    ctx.lineWidth = 1.2;
+    for (let i = 1; i < 14; i++) {
+        const x = L + ((Rr - L) * i) / 14;
+        const tt = (x - L) / (Rr - L);
+        const ay = (1 - tt) * (1 - tt) * river + 2 * (1 - tt) * tt * h * 0.5 + tt * tt * river;
+        ctx.beginPath(); ctx.moveTo(x, topDeck); ctx.lineTo(x, Math.min(ay, river - 14)); ctx.stroke();
+    }
+    for (let i = 0; i < 12; i++) glow(ctx, w * 0.32 + i * w * 0.065, topDeck - 2, 6, 'rgba(255,210,140,0.8)');
+    // Rabelo boat with a square sail
+    const bx = w * 0.22;
+    const by = river + 14;
+    ctx.fillStyle = '#140c1e';
+    ctx.beginPath(); ctx.moveTo(bx - 30, by); ctx.lineTo(bx + 30, by); ctx.lineTo(bx + 22, by + 8); ctx.lineTo(bx - 24, by + 8); ctx.fill();
+    ctx.fillRect(bx - 1, by - 34, 2, 34);
+    ctx.fillStyle = '#d8cbb0';
+    ctx.fillRect(bx - 12, by - 32, 24, 22);
+}
+
+// Sintra: Pena Palace (yellow and red, with towers and a dome) on a forested hill, evening mist
+function paintSintra(ctx, w, h) {
+    vertical(ctx, w, h, [[0, '#14123a'], [0.45, '#3a2e6a'], [0.7, '#6a4a7a'], [1, '#0c1a1e']]);
+    stars(ctx, w, h, (w * h) / 5000, h * 0.35);
+    // Hills of forest
+    const hill = (y0, col, amp) => {
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        for (let x = 0; x <= w; x += 6) ctx.lineTo(x, y0 - Math.sin((x / w) * Math.PI) * amp + Math.sin(x * 0.15) * 4 + Math.sin(x * 0.05) * 6);
+        ctx.lineTo(w, h);
+        ctx.fill();
+    };
+    hill(h * 0.72, '#1e2a3e', h * 0.18);
+    // Palace on the top
+    const px = w * 0.5;
+    const py = h * 0.54 - 6;
+    glow(ctx, px, py - 30, 120, 'rgba(255,210,140,0.25)');
+    ctx.fillStyle = '#d9a63a';
+    ctx.fillRect(px - 60, py - 34, 70, 34);
+    ctx.fillStyle = '#b8443a';
+    ctx.fillRect(px + 10, py - 46, 46, 46);
+    ctx.fillStyle = '#d9a63a';
+    ctx.fillRect(px - 26, py - 74, 22, 40);
+    ctx.beginPath(); ctx.arc(px - 15, py - 74, 13, Math.PI, 0); ctx.fill();
+    ctx.fillRect(px - 16, py - 96, 2, 10);
+    ctx.fillStyle = '#8a7ab0';
+    ctx.fillRect(px + 30, py - 70, 16, 24);
+    ctx.beginPath(); ctx.moveTo(px + 28, py - 70); ctx.lineTo(px + 38, py - 86); ctx.lineTo(px + 48, py - 70); ctx.fill();
+    ctx.fillStyle = '#c75a3a';
+    ctx.fillRect(px - 58, py - 46, 14, 12);
+    for (let i = 0; i < 8; i++) ctx.fillRect(px - 60 + i * 9, py - 38, 5, 4);
+    ctx.fillStyle = 'rgba(255,220,140,0.9)';
+    [[-50, -22], [-36, -22], [-22, -22], [18, -30], [32, -30], [44, -30], [-18, -56]].forEach(([dx, dy]) => ctx.fillRect(px + dx, py + dy, 4, 7));
+    hill(h * 0.86, '#13241c', h * 0.12);
+    // Trees as little round clumps
+    for (let i = 0; i < 40; i++) {
+        const x = rand(0, w);
+        const y = rand(h * 0.74, h);
+        ctx.fillStyle = ['#183a28', '#1d4530', '#14301f'][i % 3];
+        ctx.beginPath(); ctx.arc(x, y, rand(10, 22), 0, Math.PI * 2); ctx.fill();
+    }
+    // Mist
+    for (let i = 0; i < 4; i++) {
+        const y = h * (0.66 + i * 0.07);
+        const g = ctx.createLinearGradient(0, y - 20, 0, y + 20);
+        g.addColorStop(0, 'rgba(200,200,230,0)');
+        g.addColorStop(0.5, 'rgba(200,200,230,0.12)');
+        g.addColorStop(1, 'rgba(200,200,230,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, y - 20, w, 40);
+    }
+}
+
+// Algarve at dusk: golden sea cliffs with an arch and sea stacks, turquoise water, a small boat
+function paintAlgarve(ctx, w, h) {
+    vertical(ctx, w, h, [[0, '#1a2050'], [0.4, '#5a3a78'], [0.58, '#e07a5a'], [0.6, '#16506a'], [1, '#08283a']]);
+    stars(ctx, w, h, (w * h) / 7000, h * 0.2);
+    const hz = h * 0.6;
+    glow(ctx, w * 0.65, hz, 140, 'rgba(255,180,100,0.4)');
+    // Turquoise shallows
+    for (let i = 0; i < 50; i++) {
+        ctx.fillStyle = `rgba(120,220,220,${rand(0.05, 0.18).toFixed(2)})`;
+        ctx.fillRect(rand(0, w), rand(hz + 6, h), rand(10, 40), 2);
+    }
+    const rock = (pts) => {
+        const g = ctx.createLinearGradient(0, h * 0.4, 0, h);
+        g.addColorStop(0, '#c9873f');
+        g.addColorStop(1, '#6b3a22');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        pts.slice(1).forEach(([x, y]) => ctx.lineTo(x, y));
+        ctx.closePath();
+        ctx.fill();
+        // Rock layers
+        ctx.strokeStyle = 'rgba(80,40,20,0.35)';
+        ctx.lineWidth = 1.5;
+        const ys = pts.map((p) => p[1]);
+        for (let y = Math.min(...ys) + 10; y < Math.max(...ys); y += 9) {
+            ctx.beginPath(); ctx.moveTo(Math.min(...pts.map((p) => p[0])), y); ctx.lineTo(Math.max(...pts.map((p) => p[0])), y + 3); ctx.stroke();
+        }
+    };
+    // Big cliff on the left with an arch cut through
+    rock([[0, h], [0, h * 0.5], [w * 0.2, h * 0.48], [w * 0.38, h * 0.55], [w * 0.42, h * 0.75], [w * 0.36, h * 0.9], [w * 0.42, h]]);
+    ctx.fillStyle = '#16506a';
+    ctx.beginPath();
+    ctx.moveTo(w * 0.14, h * 0.92);
+    ctx.quadraticCurveTo(w * 0.22, h * 0.68, w * 0.3, h * 0.92);
+    ctx.fill();
+    // Sea stacks on the right
+    rock([[w * 0.72, h * 0.9], [w * 0.74, h * 0.66], [w * 0.8, h * 0.62], [w * 0.84, h * 0.7], [w * 0.85, h * 0.9]]);
+    rock([[w * 0.88, h * 0.92], [w * 0.9, h * 0.76], [w * 0.95, h * 0.74], [w * 0.97, h * 0.92]]);
+    // Foam at the foot of the rocks
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    [[w * 0.36, h * 0.9], [w * 0.78, h * 0.9], [w * 0.92, h * 0.92]].forEach(([x, y]) => ctx.fillRect(x - 18, y, 36, 2));
+    // Small boat
+    const bx = w * 0.56;
+    const by = h * 0.8;
+    ctx.fillStyle = '#f4efe6';
+    ctx.beginPath(); ctx.moveTo(bx - 16, by); ctx.lineTo(bx + 16, by); ctx.lineTo(bx + 11, by + 6); ctx.lineTo(bx - 12, by + 6); ctx.fill();
+    ctx.fillStyle = '#2a6aa0';
+    ctx.fillRect(bx - 12, by + 3, 23, 2);
+}
+
+const PAINT = { lisbon: paintLisbon, porto: paintPorto, sintra: paintSintra, algarve: paintAlgarve, ocean: paintOcean, beach: paintBeach };
 
 function ensureBubble(scene) {
     if (scene.textures.exists('decorBubble')) return;
@@ -291,11 +484,12 @@ export function createBackdrop(scene, id, depth = -10) {
     } else {
         // Twinkling windows (Lisbon) or stars (beach)
         ensureDot(scene);
-        const n = id === 'lisbon' ? 14 : 10;
+        const city = id === 'lisbon' || id === 'porto';
+        const n = city ? 14 : 10;
         for (let i = 0; i < n; i++) {
-            const y = id === 'lisbon' ? rand(h * 0.64, h * 0.84) : rand(0, h * 0.25);
+            const y = city ? rand(h * 0.6, h * 0.84) : rand(0, h * 0.2);
             const d = scene.add.image(rand(0, w), y, 'starDot')
-                .setTint(id === 'lisbon' ? 0xffcd6e : 0xfff4ea).setScale(rand(0.25, 0.45)).setAlpha(0)
+                .setTint(city ? 0xffcd6e : 0xfff4ea).setScale(rand(0.25, 0.45)).setAlpha(0)
                 .setBlendMode(Phaser.BlendModes.ADD).setDepth(depth + 1);
             scene.tweens.add({ targets: d, alpha: rand(0.4, 0.9), duration: rand(800, 1800), yoyo: true, repeat: -1, delay: rand(0, 4000), hold: rand(500, 3000) });
         }

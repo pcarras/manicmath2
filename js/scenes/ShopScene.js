@@ -10,6 +10,7 @@ import {
     spares, buySpare, SPARE_PRICE, SPARE_MAX
 } from '../progress.js';
 import { haptic } from '../settings.js';
+import { STICKERS, ownedStickers } from '../album.js';
 
 const SAMPLE = ['num_3', 'op_plus', 'num_7', 'op_times', 'special_bomb'];
 const TABS = ['deals', 'theme', 'scene', 'pop', 'extra'];
@@ -110,7 +111,7 @@ export class ShopScene extends Phaser.Scene {
     // Rows for the current tab: { kind, item, price, off }
     rows() {
         if (this.tab === 'deals') return dailyDeals();
-        if (this.tab === 'extra') return [{ kind: 'spare' }];
+        if (this.tab === 'extra') return [{ kind: 'album' }, { kind: 'spare' }];
         return catalog(this.tab).map((item) => ({ kind: this.tab, item, price: item.price }));
     }
 
@@ -146,6 +147,10 @@ export class ShopScene extends Phaser.Scene {
         const { w } = this.layout;
         const cardH = CARD_H - 10;
         const cy = y + cardH / 2;
+        if (row.kind === 'album') {
+            this.albumCard(y, cardH, add);
+            return;
+        }
         const wallet = beans();
         const spare = row.kind === 'spare';
         const has = !spare && ownedItems(row.kind).includes(row.item.id);
@@ -212,6 +217,27 @@ export class ShopScene extends Phaser.Scene {
                 fontFamily: 'Righteous', fontSize: '12px', color: '#ffb347'
             }).setOrigin(0.5));
         }
+    }
+
+    // Entry to the sticker album (its stickers are chosen and paid inside the album)
+    albumCard(y, cardH, add) {
+        const { w } = this.layout;
+        const g = add(this.add.graphics());
+        g.fillStyle(0x2a1c52, 0.95);
+        g.fillRoundedRect(14, y, w - 28, cardH, 18);
+        g.lineStyle(2, 0x38bdf8, 1);
+        g.strokeRoundedRect(14, y, w - 28, cardH, 18);
+        add(this.add.text(30, y + 20, t('album'), {
+            fontFamily: 'Righteous', fontSize: '18px', color: '#ffffff'
+        }).setOrigin(0, 0.5));
+        add(this.add.text(30, y + 40, t('albumSub'), {
+            fontFamily: 'Roboto', fontSize: '11px', color: '#c4c6f5', wordWrap: { width: w - 190 }
+        }).setOrigin(0, 0));
+        add(this.add.text(30, y + cardH - 18, `${ownedStickers().length} / ${STICKERS.length}`, {
+            fontFamily: 'Righteous', fontSize: '15px', color: '#ffd9a8'
+        }).setOrigin(0, 0.5));
+        add(chunkyButton(this, w - 84, y + cardH / 2, t('open'), 0x0284c7, () => { if (!this.dragged) this.scene.start('AlbumScene'); },
+            { width: 112, height: 42, fontSize: 17, enter: false }));
     }
 
     preview(row, y, cardH, add) {

@@ -311,6 +311,9 @@ export function rerollName() {
 export const SCENES = [
     { id: 'space', price: 0, pt: 'Espaço', en: 'Space' },
     { id: 'lisbon', price: 300, pt: 'Lisboa à noite', en: 'Lisbon by night' },
+    { id: 'porto', price: 300, pt: 'Porto e o Douro', en: 'Porto and the Douro' },
+    { id: 'sintra', price: 300, pt: 'Sintra e a Pena', en: 'Sintra and Pena Palace' },
+    { id: 'algarve', price: 250, pt: 'Falésias do Algarve', en: 'Algarve cliffs' },
     { id: 'ocean', price: 250, pt: 'Fundo do mar', en: 'Under the sea' },
     { id: 'beach', price: 250, pt: 'Praia ao pôr do sol', en: 'Sunset beach' }
 ];
