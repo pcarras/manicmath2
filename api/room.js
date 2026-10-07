@@ -16,7 +16,7 @@ const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TO
 const TTL = 60 * 60 * 2;          // rooms vanish after 2 hours
 const START_DELAY = 6000;         // ms between the second player joining and the start
 const AWAY_MS = 12000;            // no poll for this long: the player left
-const EVENT_TYPES = ['solve', 'junk', 'over', 'score', 'leave'];
+const EVENT_TYPES = ['solve', 'junk', 'over', 'score', 'leave', 'signal'];
 
 async function redis(commands) {
     const r = await fetch(`${URL}/pipeline`, {
@@ -68,6 +68,12 @@ function cleanEvent(ev) {
     if (int(ev.score, -100000, 10000000)) out.score = ev.score;
     if (int(ev.n, 1, 5)) out.n = ev.n;
     if (Array.isArray(ev.seqs)) out.seqs = ev.seqs.filter((s) => int(s, 0, 1000000)).slice(0, 3);
+    // WebRTC handshake for the TEAM mode (p2p.js): one offer and one answer
+    if (ev.type === 'signal') {
+        if (!['offer', 'answer'].includes(ev.kind) || typeof ev.sig !== 'string' || ev.sig.length > 16000) return null;
+        out.kind = ev.kind;
+        out.sig = ev.sig;
+    }
     return out;
 }
 

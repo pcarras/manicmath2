@@ -22,9 +22,9 @@ const {
 } = CONSTANTS;
 
 const OPS = ['+', '-', '×', '÷'];
-const TAP_RADIUS_SQ = (R * 1.2) ** 2;
+export const TAP_RADIUS_SQ = (R * 1.2) ** 2;
 
-function calc(a, op, b) {
+export function calc(a, op, b) {
     switch (op) {
         case '+': return a + b;
         case '-': return a - b;
@@ -35,8 +35,8 @@ function calc(a, op, b) {
 }
 
 export class GameScene extends Phaser.Scene {
-    constructor() {
-        super({ key: 'GameScene' });
+    constructor(config) {
+        super(config || { key: 'GameScene' });
     }
 
     init(data) {
@@ -70,6 +70,13 @@ export class GameScene extends Phaser.Scene {
         this.round = 0;             // team: equations solved by the team so far
         this.lastSolve = null;      // team: my last solve { round, target, i } to settle ties
         this.mate = { score: 0, solved: 0 };   // the other player's points and equations
+        // TEAM: one shared board. The room creator's phone runs it (this scene) and streams it over a
+        // direct link (p2p.js) to the other phone (GuestScene), which sends back its taps.
+        this.link = this.team && data && data.link ? data.link : null;
+        this.pidN = 0;
+        this.guestSlots = [null, null, null];
+        this.snapAcc = 0;
+        this.keyIdx = new Map();
         const seedKey = this.daily ? `mm-${this.dailyKey}` : this.multi ? `mm-room-${this.room.seed}` : null;
         this.pieceRng = seedKey ? new Phaser.Math.RandomDataGenerator([`${seedKey}-pieces`]) : null;
         this.targetRng = seedKey ? new Phaser.Math.RandomDataGenerator([`${seedKey}-targets`]) : null;
@@ -396,6 +403,9 @@ export class GameScene extends Phaser.Scene {
     createRings() {
         this.selRings = [0, 1, 2].map(() =>
             this.add.image(0, 0, 'ring').setTint(COLORS.selection).setDepth(12).setVisible(false).setScale(INV));
+        // TEAM: the teammate's picks wear an orange ring
+        this.mateRings = [0, 1, 2].map(() =>
+            this.add.image(0, 0, 'ring').setTint(0xff9f43).setDepth(12).setVisible(false).setScale(INV));
 
         // Hint: a bright pulsing ring plus a green glow behind each piece of the solution
         // (the other pieces are dimmed while a hint shows, see update)
@@ -513,6 +523,11 @@ export class GameScene extends Phaser.Scene {
 
             const d = this.slotDisplays[i];
             if (d && d.ice && d.piece.ice) d.ice.alpha = d.piece.ice.alpha;
+            if (this.link) {
+                const g = this.guestSlots[i];
+                if (g && g.alive) this.mateRings[i].setVisible(true).setPosition(g.img.x, g.img.y);
+                else this.mateRings[i].setVisible(false);
+            }
 
             const hp = this.hintPieces[i];
             const hring = this.hintRings[i];
@@ -593,6 +608,13 @@ export class GameScene extends Phaser.Scene {
         }
 
         if (this.multi) this.spawnDelay = this.levelSpawnDelay(this.mpStage());
+        if (this.link) {
+            this.snapAcc += delta;
+            if (this.snapAcc >= 66) {
+                this.snapAcc = 0;
+                this.sendSnapshot();
+            }
+        }
 
         // Spawning never stops, except while the timer power-up is active
         if (this.timerRemaining > 0) {
@@ -809,7 +831,7 @@ export class GameScene extends Phaser.Scene {
         this.Body.setVelocity(body, { x: Phaser.Math.FloatBetween(-1.2, 1.2), y: 3 });
 
         const img = this.add.image(x, y, pieceTextureKey(data)).setDepth(10).setScale(INV);
-        const p = { ...data, color, body, img, ice: null, selected: false, slot: -1, alive: true, dangerMs: 0 };
+        const p = { ...data, id: this.pidN++, color, body, img, ice: null, selected: false, slot: -1, alive: true, dangerMs: 0 };
 
         if (data.type === 'special') {
             this.tweens.add({
@@ -829,6 +851,10 @@ export class GameScene extends Phaser.Scene {
     removePiece(p) {
         if (!p.alive) return;
         p.alive = false;
+        if (p.gsel) {
+            this.guestSlots[p.gslot] = null;
+            p.gsel = false;
+        }
         if (p.sheen) p.sheen.destroy();
         this.clearFuse(p);
         this.matter.world.remove(p.body);
@@ -902,6 +928,13 @@ export class GameScene extends Phaser.Scene {
 
         this.playClick();
         if (p.ice && p.ice.alpha > 0.4) this.crackIce(p);
+
+        // TEAM: a piece in the teammate's equation is theirs
+        if (p.gsel) {
+            this.tweens.add({ targets: p.img, scale: 0.88 * INV, duration: 70, yoyo: true });
+            this.mpNotice(t('partnerTaken'), '#ffd9a8');
+            return;
+        }
 
         // Tapping a selected piece again deselects it
         if (p.selected) {
@@ -1313,6 +1346,7 @@ export class GameScene extends Phaser.Scene {
     explode(x, y) {
         const radius = R * 3.2 * 1.3;   // +30% reach
         const pushRadius = radius * 2;
+        if (this.link) this.link.send({ fx: 'boom', x: Math.round(x), y: Math.round(y) });
         this.playSound('explosionSound', 0.9);
         this.sfx.duck(0.35, 600);
         this.shake(320, 0.02);
@@ -1851,6 +1885,10 @@ export class GameScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(150);
         this.updateMpHud();
         const offEv = room.onEvent((ev) => this.onNet(ev));
+        if (this.link) {
+            this.link.onMessage((msg) => this.onGuest(msg));
+            this.link.onClose(() => { if (!this.gameOver) this.endGame('left'); });
+        }
         const offState = room.onState(({ players, failures }) => {
             if (this.gameOver) return;
             const o = players[1 - room.me];
@@ -1860,6 +1898,7 @@ export class GameScene extends Phaser.Scene {
         this.events.once('shutdown', () => {
             offEv();
             offState();
+            if (this.link) setTimeout(() => this.link.close(), 1500);
             clearTimeout(this.scoreSyncTimer);
             // Give the last event a moment to go out before leaving the room
             setTimeout(() => room.close(), 1500);
@@ -1885,6 +1924,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     sendSolve(seqs, pts) {
+        if (this.link) {
+            this.link.send({ fx: 'solved', by: 0, pts });
+            return;
+        }
         if (this.team) {
             const round = this.round;
             this.round++;
@@ -1978,6 +2021,10 @@ export class GameScene extends Phaser.Scene {
         if (this.leaveUI) { this.leaveUI.close(); this.leaveUI = null; }
         const mine = reason === undefined || reason === 'quit';
         if (mine) this.room.send({ type: 'over', score: this.score });
+        if (this.link) {
+            this.sendSnapshot();
+            this.link.send({ over: true, reason: reason === 'quit' ? 'mateQuit' : reason === 'left' ? 'left' : 'board' });
+        }
         else if (this.scoreSyncTimer) clearTimeout(this.scoreSyncTimer);
         this.matter.world.pause();
         this.music.stop();
@@ -2041,6 +2088,117 @@ export class GameScene extends Phaser.Scene {
             () => this.scene.start('MultiScene'), { width: bw, height: 50, fontSize: 18, depth, enter: false }));
         m.add(chunkyButton(this, panel.cx + bw / 2 + 8, panel.y + panel.h - 54, t('menu'), 0x6366f1,
             () => this.scene.start('MenuScene'), { width: bw, height: 50, fontSize: 18, depth, enter: false }));
+    }
+
+
+    // ------------------------------------------------------------------ TEAM host: the shared board
+
+    // Everything the other phone needs to draw the board, ~15 times a second
+    sendSnapshot() {
+        const flat = [];
+        const keys = {};
+        for (const p of this.pieces) {
+            const key = p.img.texture.key;
+            let k = this.keyIdx.get(key);
+            if (k === undefined) {
+                k = this.keyIdx.size;
+                this.keyIdx.set(key, k);
+            }
+            keys[k] = key;
+            const pos = p.body.position;
+            flat.push(p.id, Math.round(pos.x), Math.round(pos.y), Math.round(p.img.rotation * 100), k,
+                p.ice ? Math.round(p.ice.alpha * 100) : 0, p.selected ? 1 : p.gsel ? 2 : 0);
+        }
+        this.link.send({
+            s: flat, k: keys, t: this.target,
+            sc: [this.score, this.mate.score], so: [this.solved - this.mate.solved, this.mate.solved],
+            gs: this.guestSlots.map((q) => (q ? q.id : -1)), lv: this.level,
+            tm: Math.max(0, Math.ceil(this.timerRemaining / 1000)), hn: Math.max(0, Math.ceil(this.hintRemaining / 1000)),
+            hp: this.hintPieces.map((q) => q.id)
+        });
+    }
+
+    onGuest(msg) {
+        if (this.gameOver) return;
+        if (msg.tap !== undefined) this.guestTap(msg.tap);
+        else if (msg.untap !== undefined) this.guestDeselect(msg.untap);
+        else if (msg.quit) this.endGame('left');
+    }
+
+    guestTap(id) {
+        if (this.guestValidating) return;
+        const p = this.pieces.find((q) => q.id === id && q.alive);
+        if (!p) return;
+        if (p.type === 'special') {
+            if (!p.lit) this.activateSpecial(p);
+            return;
+        }
+        if (p.type === 'junk') {
+            this.sfx.clank(1.2);
+            return;
+        }
+        if (p.selected) {
+            this.link.send({ fx: 'taken' });
+            return;
+        }
+        if (p.ice && p.ice.alpha > 0.4) this.crackIce(p);
+        if (p.gsel) {
+            this.guestDeselect(p.gslot);
+            return;
+        }
+        const gs = this.guestSlots;
+        const slot = p.type === 'operator' ? 1 : (!gs[0] ? 0 : 2);
+        if (gs[slot]) this.guestDeselect(slot);
+        gs[slot] = p;
+        p.gsel = true;
+        p.gslot = slot;
+        if (gs[0] && gs[1] && gs[2]) {
+            this.guestValidating = true;
+            this.time.delayedCall(260, () => this.guestValidate());
+        }
+    }
+
+    guestDeselect(i) {
+        const p = this.guestSlots[i];
+        if (!p) return;
+        this.guestSlots[i] = null;
+        p.gsel = false;
+        p.gslot = -1;
+    }
+
+    // The teammate completed an equation on the shared board
+    guestValidate() {
+        this.guestValidating = false;
+        const [a, o, b] = this.guestSlots;
+        if (!a || !o || !b || this.gameOver) return;
+        const made = calc(a.value, o.value, b.value);
+        const eq = { a: a.value, o: o.value, b: b.value, target: this.target };
+        if (made === this.target) {
+            const base = Math.round(SCORING.base[o.value] * (1 + (this.level - 1) * SCORING.levelBonus));
+            const iced = [a, b].filter((q) => q.ice && q.ice.alpha > 0.3).length;
+            const pts = base + iced * SCORING.iceBonus;
+            for (const q of [a, o, b]) {
+                this.tintBurst(q.color);
+                this.burst.emitParticleAt(q.img.x, q.img.y, 12);
+                q.gsel = false;
+                this.removePiece(q);
+            }
+            this.guestSlots = [null, null, null];
+            this.mate.score += pts;
+            this.mate.solved++;
+            this.solved++;
+            this.sfx.rise(3);
+            this.mpNotice(`${this.mateName()} +${pts}`, '#4ade80');
+            this.link.send({ fx: 'res', ok: true, pts, ...eq });
+            this.crackJunk();
+            this.newTarget();
+            this.checkLevelUp();
+            this.updateMpHud();
+        } else {
+            this.link.send({ fx: 'res', ok: false, made, ...eq });
+            for (let i = 0; i < 3; i++) this.guestDeselect(i);
+            if (settings.get('junk')) this.time.delayedCall(350, () => this.dropJunk(2));
+        }
     }
 
     // ------------------------------------------------------------------ pause

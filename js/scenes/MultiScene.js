@@ -5,6 +5,7 @@ import { chunkyButton, modal } from '../ui.js';
 import { view, setupCamera } from '../display.js';
 import { haptic } from '../settings.js';
 import { Room } from '../net.js';
+import { Link } from '../p2p.js';
 
 // 2 PLAYERS lobby: create a TEAM or DUEL room (shows a 4-digit code to give a friend), or join one
 // with the code. When both are in, the server sets a start time and both phones count down together.
@@ -62,7 +63,10 @@ export class MultiScene extends Phaser.Scene {
 
         this.events.once('shutdown', () => {
             // Leaving the lobby without starting a game closes the room
-            if (this.room && !this.starting) this.room.close();
+            if (this.room && !this.starting) {
+                this.room.close();
+                if (this.link) this.link.close();
+            }
         });
     }
 
@@ -134,6 +138,7 @@ export class MultiScene extends Phaser.Scene {
         this.tweens.add({ targets: status, alpha: 0.4, duration: 700, yoyo: true, repeat: -1 });
         m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 40, t('cancel'), 0x6b7280, () => {
             room.close();
+            if (this.link) this.link.close();
             this.room = null;
             m.close();
             this.waitUI = null;
@@ -147,15 +152,31 @@ export class MultiScene extends Phaser.Scene {
             if (failures > 6) status.setText(t('roomOffline'));
             if (startAt) {
                 const left = Math.ceil((startAt - room.serverNow()) / 1000);
-                status.setText(left > 0 ? t('roomStartsIn', { n: left }) : t('go'));
+                // TEAM: both phones show one board, so they must be linked directly before starting
+                const linked = room.mode !== 'team' || (link && link.open);
                 this.tweens.killTweensOf(status);
                 status.setAlpha(1);
-                if (left <= 0 && !this.starting) {
+                if (left > 0) status.setText(t('roomStartsIn', { n: left }));
+                else if (!linked) {
+                    status.setText(t('linking'));
+                    if (left < -15 && !this.starting) {
+                        this.starting = true;
+                        link.close();
+                        room.close();
+                        this.room = null;
+                        m.close();
+                        this.message(t('linkFailed'));
+                    }
+                } else if (!this.starting) {
+                    status.setText(t('go'));
                     this.starting = true;
-                    this.scene.start('GameScene', { mode: room.mode, room });
+                    const host = room.me === 0;
+                    this.scene.start(room.mode === 'team' && !host ? 'GuestScene' : 'GameScene', { mode: room.mode, room, link });
                 }
             }
         });
+        const link = room.mode === 'team' ? new Link(room, room.me === 0) : null;
+        this.link = link;
         room.start();
     }
 
