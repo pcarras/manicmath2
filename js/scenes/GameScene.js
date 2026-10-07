@@ -9,7 +9,7 @@ import { safeAreaTop, safeAreaBottom } from '../pwa.js';
 import { t } from '../i18n.js';
 import { settings, haptic, isDebug } from '../settings.js';
 import { chunkyButton, roundButton, modal, openSettings } from '../ui.js';
-import { stats, daily, todayKey, modeBest } from '../stats.js';
+import { stats, daily, todayKey } from '../stats.js';
 import { report, achievementText, drawMedal } from '../achievements.js';
 import { MusicDirector } from '../music.js';
 import { logEquation } from '../analysis.js';
@@ -19,7 +19,7 @@ import { submitScore, shareText, share } from '../ranking.js';
 
 const {
     RADIUS: R, DIAMETER, TIMER_POWERUP_MS, HINT_POWERUP_MS,
-    ICE_CHANCE, ICE_FREEZE_MS, DANGER_MS, DAILY_MS, SPRINT_MS, HEAT_THAW_MS, START_PIECES
+    ICE_CHANCE, ICE_FREEZE_MS, DANGER_MS, DAILY_MS, HEAT_THAW_MS, START_PIECES
 } = CONSTANTS;
 
 const OPS = ['+', '-', '×', '÷'];
@@ -48,12 +48,9 @@ export class GameScene extends Phaser.Scene {
         // tutorial | daily | classic, or a two-player game: team | duel (see net.js)
         const asked = data && data.mode;
         this.mode = this.tutorial ? 'tutorial' : this.daily ? 'daily' : (asked === 'team' || asked === 'duel') ? asked : 'classic';
-        // Zen and Sprint were retired; the flags stay false so the shared code paths read simply
-        this.zen = false;
-        this.sprint = false;
-        this.timed = this.daily || this.sprint;
+        this.timed = this.daily;
         this.dailyKey = todayKey();
-        this.dailyRemaining = this.sprint ? SPRINT_MS : DAILY_MS;
+        this.dailyRemaining = DAILY_MS;
         this.lastDailySecs = -1;
         this.solvedOps = [];               // operator of each equation, for the share grid
         this.beansEarned = 0;              // coffee beans won during this game (paid as they come)
@@ -719,29 +716,7 @@ export class GameScene extends Phaser.Scene {
             this.music.setDanger(false);
         }
 
-        if (worst > DANGER_MS && !this.tutorial) {
-            if (this.zen) this.zenOverflow();
-            else this.endGame();
-        }
-    }
-
-    // Zen has no game over: when the pile reaches the line, the pieces above it pop
-    zenOverflow() {
-        const limit = this.deathY + R * 1.5;
-        let popped = 0;
-        for (const p of [...this.pieces]) {
-            if (p.selected || p.body.position.y - R > limit) continue;
-            this.tintBurst(p.color);
-            this.burst.emitParticleAt(p.img.x, p.img.y, 8);
-            this.removePiece(p);
-            popped++;
-        }
-        if (popped) {
-            this.playSound('sparksSound', 0.5);
-            this.shake(160, 0.005);
-            this.combo = 0;
-            this.ensureSolvable();
-        }
+        if (worst > DANGER_MS && !this.tutorial) this.endGame();
     }
 
     // ------------------------------------------------------------------ sheen
@@ -1911,7 +1886,7 @@ export class GameScene extends Phaser.Scene {
 
     // Coffee beans are banked straight away (quitting mid-game keeps them)
     earnBeans(n, x, y) {
-        const won = this.zen ? Math.ceil(n / 2) : n;
+        const won = n;
         // The bling climbs while beans keep coming without a long pause
         this.beanChain = this.time.now - this.lastBeanAt < 6000 ? this.beanChain + 1 : 0;
         this.lastBeanAt = this.time.now;
@@ -2352,19 +2327,7 @@ export class GameScene extends Phaser.Scene {
             });
         }, opts));
         m.add(chunkyButton(this, panel.cx, panel.y + 256, t('restart'), 0xf59e0b, () => this.scene.restart(this.restartData()), opts));
-        // Zen never ends by itself: END shows the results (and pays the beans)
-        if (this.zen) {
-            m.add(chunkyButton(this, panel.cx, panel.y + 328, t('end'), 0xef4444, () => {
-                this.closePauseMenu();
-                this.paused = false;
-                this.time.paused = false;
-                (this.frozenTweens || []).forEach((tw) => tw.resume());
-                this.frozenTweens = null;
-                this.endGame('zen');
-            }, opts));
-        } else {
-            m.add(chunkyButton(this, panel.cx, panel.y + 328, t('menu'), 0x8b5cf6, () => this.scene.start('MenuScene'), opts));
-        }
+        m.add(chunkyButton(this, panel.cx, panel.y + 328, t('menu'), 0x8b5cf6, () => this.scene.start('MenuScene'), opts));
     }
 
     restartData() {
@@ -2571,10 +2534,8 @@ export class GameScene extends Phaser.Scene {
 
     // ------------------------------------------------------------------ levels & scoring
 
-    // Sprint lasts one minute, so pieces arrive faster to keep the player busy
     levelSpawnDelay(level) {
-        const d = LEVELS.spawnDelay(level);
-        return this.sprint ? Math.max(450, Math.round(d * 0.6)) : d;
+        return LEVELS.spawnDelay(level);
     }
 
     allowedOps() {
@@ -2694,8 +2655,8 @@ export class GameScene extends Phaser.Scene {
         this.toastAchievements(report('level', { level: this.level }));
         this.earnBeans(3, this.w / 2, this.h * 0.42 + 90);
         this.toastMissions(track('level', { level: this.level }));
-        // Every 3 levels of Classic / Zen: a 20 s themed bonus round
-        if ((this.mode === 'classic' || this.zen) && this.level % 3 === 0) {
+        // Every 3 levels of Classic: a 20 s themed bonus round
+        if (this.mode === 'classic' && this.level % 3 === 0) {
             this.time.delayedCall(1800, () => this.startBonus());
         }
     }
@@ -2733,7 +2694,7 @@ export class GameScene extends Phaser.Scene {
             this.levelText.setText(`⏱ ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`)
                 .setColor(secs <= 10 ? '#ff5e5b' : '#ffd23f');
         } else {
-            this.levelText.setText(this.tutorial ? '' : `${this.zen ? 'ZEN · ' : ''}${t('levelShort')} ${this.level}`);
+            this.levelText.setText(this.tutorial ? '' : `${t('levelShort')} ${this.level}`);
         }
         const g = this.levelBar;
         g.clear();
@@ -2894,21 +2855,19 @@ export class GameScene extends Phaser.Scene {
 
         let result;
         if (this.daily) result = daily.record(this.dailyKey, this.score);
-        else if (this.sprint) result = modeBest.record('sprint', this.score);
-        else if (this.zen) result = { isRecord: false, best: 0 };
         else result = stats.record({ score: this.score, equations: this.solved, bestCombo: this.bestCombo, level: this.level });
         this.toastAchievements(report('gameOver', { score: this.score, level: this.level, daily: !!this.daily }));
         this.toastMissions(track('gameOver', { score: this.score, level: this.level, mode: this.mode }));
 
-        // End bonus on top of the beans won during play (zen pays half: there is no pressure)
-        const bonus = Math.round(Math.floor(this.score / 500) * (this.zen ? 0.5 : 1));
+        // End bonus on top of the beans won during play
+        const bonus = Math.floor(this.score / 500);
         if (bonus) addBeans(bonus);
         result.beans = this.beansEarned + bonus;
 
         if (this.daily) result.streak = completeDaily();
         // Fire and forget: the game over panel shows the rank when it arrives
-        this.rankBoard = this.daily ? 'daily' : this.sprint ? 'sprint' : this.zen ? null : 'classic';
-        if (this.rankBoard && this.score > 0) result.rankPromise = submitScore(this.rankBoard, this.score, this.dailyKey);
+        this.rankBoard = this.daily ? 'daily' : 'classic';
+        if (this.score > 0) result.rankPromise = submitScore(this.rankBoard, this.score, this.dailyKey);
 
         this.gameOverCascade(() => this.showGameOverPanel(result));
     }
@@ -2944,7 +2903,7 @@ export class GameScene extends Phaser.Scene {
         const bica = m.add(addMascot(this, panel.x + panel.w - 40, panel.y + 26, pose, { height: 84, depth: 520 }));
         bob(this, bica, 3);
 
-        const title = m.add(this.add.text(panel.cx, panel.y + 50, this.endReason === 'time' ? t('timeUp') : this.endReason === 'zen' ? t('zen') : t('gameOver'), {
+        const title = m.add(this.add.text(panel.cx, panel.y + 50, this.endReason === 'time' ? t('timeUp') : t('gameOver'), {
             fontFamily: 'Righteous', fontSize: '42px', color: '#ffffff',
             stroke: '#1b0f2e', strokeThickness: 8,
             shadow: { offsetX: 0, offsetY: 0, color: '#ef4444', blur: 18, fill: true }
@@ -2975,11 +2934,10 @@ export class GameScene extends Phaser.Scene {
         });
 
         // Record line: celebration for a new best, otherwise the best to beat
-        const bestLabel = this.daily ? t('dailyBest') : this.sprint ? t('sprintBest') : t('best');
-        const recordText = this.zen ? t('zenDesc')
-            : result.isRecord ? `🏆 ${t('newRecord')}` : `${bestLabel}: ${result.best}`;
+        const bestLabel = this.daily ? t('dailyBest') : t('best');
+        const recordText = result.isRecord ? `🏆 ${t('newRecord')}` : `${bestLabel}: ${result.best}`;
         const record = m.add(this.add.text(panel.cx, panel.y + 206, recordText, {
-            fontFamily: 'Righteous', fontSize: result.isRecord ? '24px' : this.zen ? '14px' : '17px',
+            fontFamily: 'Righteous', fontSize: result.isRecord ? '24px' : '17px',
             color: result.isRecord ? '#ffd23f' : '#8b8bc4',
             stroke: '#1b0f2e', strokeThickness: result.isRecord ? 6 : 0
         }).setOrigin(0.5).setDepth(m.depth).setAlpha(0));
@@ -3027,7 +2985,7 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    // Classic and sprint: rank + RANKING button. Returns the next free y.
+    // Classic: rank + RANKING button. Returns the next free y.
     rankResults(m, result, y) {
         this.rankLine(m, result, y + 26);
         m.add(chunkyButton(this, m.panel.cx, y + 66, t('ranking'), 0xa855f7,

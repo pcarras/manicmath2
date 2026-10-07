@@ -13,7 +13,9 @@ export const TEAM_NAMES = 'lbteam';  // duo "idA-idB" -> "Name & Name"
 export const WEEK_TTL = 60 * 60 * 24 * 22;   // weekly boards are kept three weeks: last week is still readable
 
 export const weekKey = (back = 0) => `lb:week:${weekStart(back)}`;
-export const duelWeekKey = () => `lb:duel:${weekStart()}`;
+export const duelWeekKey = (back = 0) => `lb:duel:${weekStart(back)}`;
 export const DUEL_ALL_KEY = 'lb:duelall';
 export const teamWeekKey = () => `lb:team:${weekStart()}`;
 export const teamGamesKey = () => `lbteamn:${weekStart()}`;
+export const friendsKey = (id) => `lbfr:${id}`;   // players I played a 2-player game with (newest kept, see FRIENDS_MAX)
+export const FRIENDS_MAX = 50;

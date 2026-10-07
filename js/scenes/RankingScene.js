@@ -9,8 +9,8 @@ import { fetchBoard } from '../ranking.js';
 import { askName } from '../nameDialog.js';
 
 const ROW_H = 44;
-const BOARDS = ['week', 'classic', 'daily', 'duel', 'team'];
-const TAB_KEYS = { daily: 'boardDaily', classic: 'boardAllTime', week: 'boardWeek', duel: 'boardDuel', team: 'boardTeam' };
+const BOARDS = ['week', 'classic', 'daily', 'friends', 'duel', 'team'];
+const TAB_KEYS = { daily: 'boardDaily', classic: 'boardAllTime', week: 'boardWeek', duel: 'boardDuel', team: 'boardTeam', friends: 'boardFriends' };
 const MEDALS = [0xffd23f, 0xc0c7d6, 0xcd7f32];
 
 // Rankings: the classic game (this week, best ever, today's daily challenge) and the two-player
@@ -48,17 +48,17 @@ export class RankingScene extends Phaser.Scene {
         }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
 
         // Tabs
-        const tabW = Math.min(76, (w - 28) / BOARDS.length - 4);
+        const tabW = Math.min(76, (w - 20) / BOARDS.length - 3);
         BOARDS.forEach((b, i) => {
             const on = b === this.board;
-            chunkyButton(this, w / 2 + (i - (BOARDS.length - 1) / 2) * (tabW + 4), top + 76, t(TAB_KEYS[b]), on ? 0xa855f7 : 0x3a3458,
+            chunkyButton(this, w / 2 + (i - (BOARDS.length - 1) / 2) * (tabW + 3), top + 76, t(TAB_KEYS[b]), on ? 0xa855f7 : 0x3a3458,
                 () => { if (!on) this.scene.restart({ board: b }); },
-                { width: tabW, height: 38, fontSize: 13, depth: 52, enter: false }).setScrollFactor(0);
+                { width: tabW, height: 38, fontSize: tabW < 62 ? 11 : 13, depth: 52, enter: false }).setScrollFactor(0);
         });
         const duel = this.board === 'duel';
         const captions = {
             daily: `${t('daily')} · ${todayKey()}`, week: t('rankingWeek'), classic: t('rankingAllTime'),
-            duel: this.allTime ? t('rankingDuelAll') : t('rankingDuelWeek'), team: t('rankingTeam')
+            duel: this.allTime ? t('rankingDuelAll') : t('rankingDuelWeek'), team: t('rankingTeam'), friends: t('rankingFriends')
         };
         this.add.text(duel ? 16 : w / 2, top + 118, captions[this.board], {
             fontFamily: 'Roboto', fontSize: '12px', color: '#a5a8ff'
@@ -209,6 +209,13 @@ export class RankingScene extends Phaser.Scene {
                     fontFamily: 'Righteous', fontSize: '16px', color: '#ffd23f'
                 }).setOrigin(0.5);
                 bottom += 40;
+            } else if (this.board === 'friends') {
+                // how many friends there are, or how to get some
+                const text = data.friends === 0 ? t('friendsHint') : t(data.friends === 1 ? 'friendsOne' : 'friendsCount', { n: data.friends });
+                this.add.text(w / 2, bottom + 22, text, {
+                    fontFamily: 'Roboto', fontSize: '13px', color: '#8a84b0', align: 'center', wordWrap: { width: w - 60 }
+                }).setOrigin(0.5, 0);
+                bottom += 70;
             } else if (!data.me && this.board !== 'team') {
                 this.add.text(w / 2, bottom + 16, t('notRankedYet'), {
                     fontFamily: 'Roboto', fontSize: '13px', color: '#8a84b0'

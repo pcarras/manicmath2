@@ -32,8 +32,10 @@ function run([cmd, key, ...a]) {
             const z = db.get(key) || new Map();
             const rows = [...z].sort((x, y) => y[1] - x[1]);
             const st = Number(a[0]); const en = Number(a[1]);
-            return rows.slice(st, en < 0 ? undefined : en + 1).flat().map(String);
+            const part = rows.slice(st, en < 0 ? undefined : en + 1);
+            return a.includes('WITHSCORES') ? part.flat().map(String) : part.map((r) => r[0]);
         }
+        case 'ZREMRANGEBYRANK': return 0;
         case 'ZINCRBY': { const z = db.get(key) || new Map(); z.set(a[1], (z.get(a[1]) || 0) + Number(a[0])); db.set(key, z); return String(z.get(a[1])); }
         case 'HINCRBY': { const h = db.get(key) || new Map(); h.set(a[0], String(Number(h.get(a[0]) || 0) + Number(a[1]))); db.set(key, h); return Number(h.get(a[0])); }
         case 'ZREVRANK': { const z = db.get(key) || new Map(); const ids = [...z].sort((x, y) => y[1] - x[1]).map((x) => x[0]); const i = ids.indexOf(a[0]); return i < 0 ? null : i; }

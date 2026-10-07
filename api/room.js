@@ -14,7 +14,7 @@
 // GET  /api/room?code=1234&id=<player>&since=<n>
 //      -> { mode, seed, players: [{ name, here }], startAt, now, events: [{ i, from, ...ev }] }
 import { checkName } from '../js/namefilter.js';
-import { NAMES, TEAM_NAMES, WEEK_TTL, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey } from './_boards.js';
+import { NAMES, TEAM_NAMES, WEEK_TTL, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey, friendsKey, FRIENDS_MAX } from './_boards.js';
 
 const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -215,7 +215,12 @@ export default async function handler(req, res) {
             if (mineNew !== 1) { none(); return; }
             const ids = [room.p0, room.p1];
             const nameOf = [room.n0, room.n1];
-            const names = [['HSET', NAMES, ids[0], nameOf[0], ids[1], nameOf[1]]];
+            // Playing together makes two players friends (their ranking shows both, newest friends kept)
+            const names = [
+                ['HSET', NAMES, ids[0], nameOf[0], ids[1], nameOf[1]],
+                ['ZADD', friendsKey(ids[0]), String(now), ids[1]], ['ZREMRANGEBYRANK', friendsKey(ids[0]), '0', String(-FRIENDS_MAX - 1)],
+                ['ZADD', friendsKey(ids[1]), String(now), ids[0]], ['ZREMRANGEBYRANK', friendsKey(ids[1]), '0', String(-FRIENDS_MAX - 1)]
+            ];
             if (room.mode === 'duel') {
                 // one result per room: whoever reports first decides (both phones normally agree)
                 const winner = ids[b.win === true ? me : 1 - me];

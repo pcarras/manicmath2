@@ -21,17 +21,20 @@ TODOS OS DIAS HÁ ALGO NOVO
 • 3 missões novas por dia
 • Partilha o teu resultado com os amigos
 
-MODOS
-• Clássico: até a pilha chegar à linha
-• Zen: sem linha vermelha, para treinar com calma
-• Sprint 60s: o máximo de contas num minuto
+JOGA SOZINHO OU COM UM AMIGO
+• Clássico: até a pilha chegar à linha, com uma ronda bónus de 3 em 3 níveis
+• Treino: mini jogos de 1 minuto (tabuadas, números primos, frações)
+• 2 jogadores online: em Equipa (o mesmo ecrã, os dois a ajudar) ou em Duelo (cada conta certa manda um trambolho ao outro). Entram com um código de 4 dígitos, sem conversa por texto
+• Rankings da semana, de sempre, do dia, dos amigos, dos duelos e das duplas
+• Análise: vê onde estás a ir bem e o que treinar
 
 E AINDA
-• Temas para as peças: Clássico, Neon, Retro Pixel e Bica, comprados com grãos de café ganhos a jogar
-• 16 conquistas
+• Loja com grãos de café ganhos a jogar: temas para as peças, cenários, efeitos e acessórios para a Bica
+• Caderneta de cromos de matemáticos de todo o mundo
+• 16 conquistas e prémios semanais
 • Música que acelera com o jogo
 • Modo de alto contraste e opção de menos animação
-• Funciona sem internet (exceto o ranking)
+• Funciona sem internet (exceto rankings e jogos a dois)
 • Sem anúncios e sem compras com dinheiro real
 
 Bom para treinar o cálculo mental, para miúdos e graúdos.

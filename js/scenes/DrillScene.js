@@ -13,7 +13,7 @@ import { settings, haptic } from '../settings.js';
 import { chunkyButton, roundButton, modal } from '../ui.js';
 import { MusicDirector, DRILL_TRACK } from '../music.js';
 import { Sfx } from '../sfx.js';
-import { addBeans } from '../progress.js';
+import { addBeans, track } from '../progress.js';
 import {
     drillById, drillText, recordDrill, featuredDrill, DRILL_MS, BONUS_MS, isPrime, smallestFactor,
     F, fracValue, fracLabel, fracWords, STAGES, fractionSplit, DRILLS
@@ -758,6 +758,7 @@ export class DrillScene extends Phaser.Scene {
         }
         const d = this.drill;
         const res = recordDrill(d, this.score);
+        track('drill');
         const featured = featuredDrill() === d.id;
         const beans = Math.round((this.score / 150) * (featured ? 2 : 1));
         if (beans) addBeans(beans);

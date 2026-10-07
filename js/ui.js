@@ -243,7 +243,7 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
             settings.set('god', !god);
             render();
         });
-        // The tutorial used to live in the old MODES menu
+        // The tutorial can be replayed from here (only offered in the menu)
         if (inMenu) {
             y += ROW;
             toggleRow(scene, m, y, t('tutorial'), t('open'), true, () => { m.close(); scene.scene.start('GameScene', { tutorial: true }); });

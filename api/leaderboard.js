@@ -9,11 +9,13 @@
 // GET  /api/leaderboard?board=daily|classic|week|duel|duelAll|team&date=YYYY-MM-DD&id=<player>[&last=1]
 //      -> { board, date, top: [{ name, score, me }], me: { rank, score } | null,
 //           near: [{ rank, name, score, me }] | null }   near = the player and 3 rows above and below
-//      last=1 (week only): the week that just ended, used to hand out the weekly prizes
+//      last=1 (week and duel): the week that just ended, used to hand out the weekly prizes
+//      board=friends: this week's scores of me and the players I played a 2-player game with,
+//      { top: every row, me, friends: how many friends I have, near: null }
 // POST /api/leaderboard { board, date, id, name, score }  (name checked by js/namefilter.js)
 //      -> same shape after saving; 422 { error: 'name', reason } when the name is refused
 import { checkName } from '../js/namefilter.js';
-import { NAMES, TEAM_NAMES, WEEK_TTL, weekStart, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey } from './_boards.js';
+import { NAMES, TEAM_NAMES, WEEK_TTL, weekStart, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey, friendsKey } from './_boards.js';
 
 const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -46,7 +48,7 @@ async function redis(commands) {
 const boardKey = (board, date, last) => {
     if (board === 'daily') return `lb:${date}`;
     if (board === 'week') return weekKey(last ? 1 : 0);
-    if (board === 'duel') return duelWeekKey();
+    if (board === 'duel') return duelWeekKey(last ? 1 : 0);
     if (board === 'duelAll') return DUEL_ALL_KEY;
     if (board === 'team') return teamWeekKey();
     return `lb:${board}`;
@@ -58,7 +60,31 @@ function pairs(flat) {
     return out;
 }
 
+// Me and my friends (players from my 2-player games) on this week's individual board
+async function readFriends(id) {
+    const [fl] = id ? await redis([['ZRANGE', friendsKey(id), '0', '-1']]) : [[]];
+    const ids = id ? [id, ...fl] : [];
+    if (!ids.length) return { board: 'friends', date: weekStart(), top: [], me: null, near: null, friends: 0 };
+    const res = await redis([...ids.map((pid) => ['ZSCORE', weekKey(), pid]), ['HMGET', NAMES, ...ids], ['ZRANGE', weekKey(1), '0', '2', 'REV']]);
+    const names = res[ids.length];
+    const frames = {};
+    (res[ids.length + 1] || []).forEach((pid, i) => { frames[pid] = i + 1; });
+    const rows = ids.map((pid, i) => ({ pid, score: Number(res[i]) || 0, name: names[i] || '?' }))
+        .filter((r) => r.pid === id || r.score > 0)
+        .sort((a, b) => b.score - a.score);
+    const k = rows.findIndex((r) => r.pid === id);
+    return {
+        board: 'friends',
+        date: weekStart(),
+        top: rows.map((r) => ({ name: r.name, score: r.score, me: r.pid === id, ...(frames[r.pid] ? { frame: frames[r.pid] } : {}) })),
+        me: k >= 0 ? { rank: k + 1, score: rows[k].score } : null,
+        near: null,
+        friends: fl.length
+    };
+}
+
 async function read(board, date, id, last) {
+    if (board === 'friends') return readFriends(id);
     const key = boardKey(board, date, last);
     const team = board === 'team';   // rows are duos ("idA-idB"), so a single player has no rank of their own
     const cmds = [['ZRANGE', key, '0', String(TOP - 1), 'REV', 'WITHSCORES']];
@@ -79,9 +105,9 @@ async function read(board, date, id, last) {
         const cmds2 = [['HMGET', team ? TEAM_NAMES : NAMES, ...ids]];
         if (board === 'daily') cmds2.push(['HMGET', `lbn:${date}`, ...ids]);
         if (team) cmds2.push(['HMGET', teamGamesKey(), ...ids]);
-        // Last week's top 3 wear a frame this week
+        // Last week's top 3 (of the duel board on the duel boards) wear a frame this week
         const frameAt = cmds2.length;
-        if (!team) cmds2.push(['ZRANGE', weekKey(1), '0', '2', 'REV']);
+        if (!team) cmds2.push(['ZRANGE', board === 'duel' || board === 'duelAll' ? duelWeekKey(1) : weekKey(1), '0', '2', 'REV']);
         const res = await redis(cmds2);
         if (!team) (res[frameAt] || []).forEach((pid, i) => { frames[pid] = i + 1; });
         ids.forEach((pid, i) => {
@@ -96,14 +122,14 @@ async function read(board, date, id, last) {
     });
     return {
         board,
-        date: board === 'week' ? weekStart(last ? 1 : 0) : board === 'daily' ? date : weekStart(),
+        date: board === 'week' || board === 'duel' ? weekStart(last ? 1 : 0) : board === 'daily' ? date : weekStart(),
         top: top.map(row),
         me: id && rank !== null && rank !== undefined ? { rank: rank + 1, score: Number(score) } : null,
         near: near ? near.map((r) => ({ rank: r.rank, ...row(r) })) : null
     };
 }
 
-const validBoard = (b) => ['daily', 'classic', 'week', 'sprint', 'duel', 'duelAll', 'team'].includes(b);
+const validBoard = (b) => ['daily', 'classic', 'week', 'sprint', 'duel', 'duelAll', 'team', 'friends'].includes(b);
 const writable = (b) => b === 'daily' || b === 'classic' || b === 'sprint';   // the others are filled by api/room.js
 const validDate = (d) => d === today() || d === today(-1);
 const validId = (id) => typeof id === 'string' && /^[a-z0-9]{16}$/.test(id);

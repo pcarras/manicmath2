@@ -1,4 +1,4 @@
-// Daily ranking client + Wordle-style result sharing.
+// Ranking client (daily, classic, weekly, duel, team, friends) + Wordle-style result sharing.
 import { player } from './progress.js';
 import { stats } from './stats.js';
 import { t, lang } from './i18n.js';
@@ -37,7 +37,7 @@ export async function submitScore(board, score, date, extra = {}) {
     return r;
 }
 
-// Personal bests saved on the phone before the classic / sprint rankings existed (or while
+// Personal bests saved on the phone before the classic ranking existed (or while
 // offline) are sent once, so the ranking always reflects the best ever played on this device.
 const SYNC_KEY = 'mm-synced';
 

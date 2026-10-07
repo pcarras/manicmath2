@@ -171,7 +171,7 @@ const MISSION_POOL = [
     { kind: 'score', n: [2000, 5000], beans: 30, pt: 'Faz {n} pontos num jogo', en: 'Score {n} in one game' },
     { kind: 'level', n: [4, 6], beans: 30, pt: 'Chega ao nível {n}', en: 'Reach level {n}' },
     { kind: 'daily', n: [1], beans: 25, pt: 'Joga o desafio diário', en: 'Play the daily challenge' },
-    { kind: 'mode', n: [1], beans: 20, pt: 'Joga uma partida Zen ou Sprint', en: 'Play a Zen or Sprint game' }
+    { kind: 'drill', n: [1], beans: 20, pt: 'Faz um mini jogo do TREINO', en: 'Play a TRAINING mini game' }
 ];
 
 // Small deterministic generator so everyone gets the same 3 missions on the same day
@@ -200,7 +200,9 @@ function rollMissions(dateKey) {
 export function missions() {
     const s = load();
     const today = todayKey();
-    if (s.missions.date !== today) {
+    // A mission kind that no longer exists (an old mode) is replaced by a fresh set
+    const stale = s.missions.list.some((m) => !MISSION_POOL.some((d) => d.kind === m.kind));
+    if (s.missions.date !== today || stale) {
         s.missions = { date: today, list: rollMissions(today) };
         save(s);
     }
@@ -214,7 +216,7 @@ export function missionText(m) {
 }
 
 // Feed game events. Returns missions completed by this event (each already paid in beans).
-// solve: { op, combo, iced } · special: {} · gameOver: { score, level, mode } · level: { level }
+// solve: { op, combo, iced } · special: {} · drill: {} · gameOver: { score, level, mode } · level: { level }
 export function track(event, data = {}) {
     missions();
     const s = load();
@@ -228,6 +230,8 @@ export function track(event, data = {}) {
             if (m.kind === 'mul' && data.op === '×') m.progress++;
             if (m.kind === 'ice') m.progress += data.iced || 0;
             if (m.kind === 'combo') m.progress = Math.max(m.progress, data.combo || 0);
+        } else if (event === 'drill' && m.kind === 'drill') {
+            m.progress++;
         } else if (event === 'special' && m.kind === 'special') {
             m.progress++;
         } else if (event === 'level' && m.kind === 'level') {
@@ -235,7 +239,6 @@ export function track(event, data = {}) {
         } else if (event === 'gameOver') {
             if (m.kind === 'score') m.progress = Math.max(m.progress, data.score || 0);
             if (m.kind === 'daily' && data.mode === 'daily') m.progress = 1;
-            if (m.kind === 'mode' && (data.mode === 'zen' || data.mode === 'sprint')) m.progress = 1;
         }
         if (m.progress !== before && m.progress >= m.n) {
             m.progress = m.n;
@@ -487,12 +490,16 @@ export function weeklyBadge() {
     return badgeFor((load().weekly || {}).weeks || 0);
 }
 
-// Pays last week's prizes. rank: place in last week's ranking (1 = first) or null. Returns what was won.
-export function claimWeekly(week, days, rank) {
+// Pays last week's prizes. rank / duelRank: place in last week's weekly and duel rankings
+// (1 = first) or null. Returns what was won.
+export function claimWeekly(week, days, rank, duelRank = null) {
     const s = load();
     const w = { ...DEFAULTS.weekly, ...(s.weekly || {}) };
     if (w.claimed === week) return null;
-    const out = { beans: 0, participation: false, badge: null, newBadge: false, rank: rank && rank <= 3 ? rank : null };
+    const out = {
+        beans: 0, participation: false, badge: null, newBadge: false,
+        rank: rank && rank <= 3 ? rank : null, duelRank: duelRank && duelRank <= 3 ? duelRank : null
+    };
     if (days >= WEEKLY_MIN_DAYS) {
         out.participation = true;
         out.beans += WEEKLY_BEANS;
@@ -502,6 +509,7 @@ export function claimWeekly(week, days, rank) {
         out.newBadge = out.badge !== before;
     }
     if (out.rank) out.beans += TOP_BEANS[out.rank - 1];
+    if (out.duelRank) out.beans += TOP_BEANS[out.duelRank - 1];
     w.claimed = week;
     s.weekly = w;
     s.beans += out.beans;

@@ -31,8 +31,7 @@ export const CONSTANTS = {
     HEAT_THAW_MS: 9000,        // heat power-up: frozen pieces stay clear this long, then refreeze slowly
     START_PIECES: 12,          // pieces already falling when a game starts
     DANGER_MS: 1200,           // a settled piece above the death line for this long ends the game
-    DAILY_MS: 120000,          // daily challenge length (time attack)
-    SPRINT_MS: 60000           // sprint mode length
+    DAILY_MS: 120000           // daily challenge length (time attack)
 };
 
 // Matter.js body options shared by the game and the perf test

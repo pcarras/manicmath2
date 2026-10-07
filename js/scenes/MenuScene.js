@@ -38,7 +38,18 @@ export class MenuScene extends Phaser.Scene {
         const short = h < 720;   // small screens drop the subtitle to keep the buttons roomy
         const firstTime = !this.registry.get('titleShown');
         this.registry.set('titleShown', true);
-        const titleBottom = createTitle(this, w / 2, top + Math.max(short ? 82 : 92, h * 0.13), size, { intro: firstTime, calm });
+        // Title + buttons are one block: measure it first, then centre it between the top buttons and
+        // the footer (it used to hug the top and leave the lower third empty)
+        const y1 = top + Math.max(short ? 82 : 92, h * 0.13);
+        const content0 = (short ? y1 + 1.5 * size - 6 : y1 + 1.5 * size + 26);
+        const playY0 = Math.max(top + h * 0.4, content0 + 46);
+        const rowGap = Math.min(80, (h - 70 - playY0) / 4.6);
+        const hasInstall = !PHONE && installMode();
+        const blockTop = y1 - size * 0.5;
+        const blockBottom = playY0 + 3 * rowGap + 12 + 26 + (hasInstall ? rowGap : 0);
+        const areaMid = (top + 58 + h - 70) / 2;
+        this.shiftY = Math.round(Phaser.Math.Clamp(areaMid - (blockTop + blockBottom) / 2, 0, h * 0.12));
+        const titleBottom = createTitle(this, w / 2, y1 + this.shiftY, size, { intro: firstTime, calm });
 
         const subtitle = this.add.text(w / 2, titleBottom + 14, t('subtitle'), {
             fontFamily: 'Roboto',
@@ -99,8 +110,8 @@ export class MenuScene extends Phaser.Scene {
         };
         this.go = go;
         const bw = Math.min(250, w - 64);
-        let y = Math.max(top + h * 0.4, contentBottom + 46);
-        const gap = Math.min(80, (h - 70 - y) / 4.6);
+        let y = Math.max(top + h * 0.4 + this.shiftY, contentBottom + 46);
+        const gap = rowGap;
         const playBtn = chunkyButton(this, w / 2, y, t('play'), 0x22c55e,
             go('GameScene', () => ({ tutorial: !settings.get('tutorialDone') })), { width: bw, height: 66, fontSize: 32, delay: 200 });
         // The main call to action breathes gently
@@ -227,18 +238,20 @@ export class MenuScene extends Phaser.Scene {
         if (!due || this.registry.get('weeklyChecked')) return;
         this.registry.set('weeklyChecked', true);
         let rank = null;
+        let duelRank = null;
         if (due.days > 0) {
-            const r = await fetchBoard('week', undefined, true);
-            if (!r.ok) { this.registry.set('weeklyChecked', false); return; }   // offline: try again next time
+            const [r, d] = await Promise.all([fetchBoard('week', undefined, true), fetchBoard('duel', undefined, true)]);
+            if (!r.ok || !d.ok) { this.registry.set('weeklyChecked', false); return; }   // offline: try again next time
             rank = r.data.me ? r.data.me.rank : null;
+            duelRank = d.data.me ? d.data.me.rank : null;
         }
-        const won = claimWeekly(due.week, due.days, rank);
-        if (!won || !this.sys.isActive() || (!won.participation && !won.rank)) return;
+        const won = claimWeekly(due.week, due.days, rank, duelRank);
+        if (!won || !this.sys.isActive() || (!won.participation && !won.rank && !won.duelRank)) return;
         this.showWeekly(won, due.days);
     }
 
     showWeekly(won, days) {
-        const m = modal(this, { depth: 700, height: 320, title: t('weeklyTitle') });
+        const m = modal(this, { depth: 700, height: won.rank && won.duelRank && won.participation ? 400 : 330, title: t('weeklyTitle') });
         const { panel } = m;
         const d = m.depth;
         let y = panel.y + 96;
@@ -254,6 +267,7 @@ export class MenuScene extends Phaser.Scene {
             line(`${won.badge.icon}  ${t(won.newBadge ? 'weeklyBadgeNew' : 'weeklyBadge', { name })}`, '#ffd23f', 20);
         }
         if (won.rank) line(`${['🥇', '🥈', '🥉'][won.rank - 1]}  ${t('weeklyTop', { n: won.rank })}`, '#4ade80', 16);
+        if (won.duelRank) line(`⚔️  ${t('weeklyDuelTop', { n: won.duelRank })}`, '#f87171', 16);
         if (won.beans) line(t('weeklyBeans', { n: won.beans }), '#e8b878', 20);
         m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 44, 'OK', 0x22c55e, () => m.close(),
             { width: 140, height: 46, fontSize: 22, depth: d, enter: false }));
