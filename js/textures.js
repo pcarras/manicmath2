@@ -10,6 +10,7 @@ export const TEX_SIZE = DIAMETER + 4;
 // Real pixel size of piece textures (they are painted at RES for sharp HiDPI rendering).
 // Use it to size images: setScale(displayPx / TEX_PX).
 export const TEX_PX = TEX_SIZE * RES;
+export const SHEEN_FRAMES = 10;
 export const OP_KEYS = { '+': 'plus', '-': 'minus', '×': 'times', '÷': 'divide' };
 
 const TIMER_IMG_URL = 'assets/power up time20s.png';
@@ -26,7 +27,7 @@ function shade(color, f) {
 
 // Textures with hard edges (pieces, rings, ice, hand) are painted at RES; soft FX stay at 1x.
 // Images using a sharp texture are shown at scale INV (see display.js).
-const SHARP = (key) => key.startsWith('piece_') || key.startsWith('prev_') || key === 'ring' || key === 'ice' || key === 'hand';
+const SHARP = (key) => key.startsWith('piece_') || key.startsWith('prev_') || key === 'ring' || key === 'ice' || key === 'hand' || key === 'sheen';
 
 function canvasTexture(scene, key, w, h, draw) {
     if (scene.textures.exists(key)) return;
@@ -641,6 +642,45 @@ export function ensureTextures(scene) {
         g.addColorStop(1, 'rgba(255,200,120,0)');
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, 256, 256);
+    });
+
+    // Sheen: a diagonal glint crossing a ball, in SHEEN_FRAMES steps side by side (one texture,
+    // so every glint on screen is drawn in a single batch)
+    if (!scene.textures.exists('sheen')) {
+        canvasTexture(scene, 'sheen', S * SHEEN_FRAMES, S, (ctx) => {
+            for (let k = 0; k < SHEEN_FRAMES; k++) {
+                const ox = k * S;
+                const t = k / (SHEEN_FRAMES - 1);
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(ox + c, c, R - 1, 0, Math.PI * 2);
+                ctx.clip();
+                const g = ctx.createLinearGradient(ox + c - R, c - R, ox + c + R, c + R);
+                const at = (v) => Math.min(1, Math.max(0, v));
+                g.addColorStop(0, 'rgba(255,255,255,0)');
+                g.addColorStop(at(t - 0.16), 'rgba(255,255,255,0)');
+                g.addColorStop(at(t - 0.05), 'rgba(255,255,255,0.35)');
+                g.addColorStop(at(t), 'rgba(255,255,255,0.6)');
+                g.addColorStop(at(t + 0.05), 'rgba(255,255,255,0.35)');
+                g.addColorStop(at(t + 0.16), 'rgba(255,255,255,0)');
+                g.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = g;
+                ctx.fillRect(ox, 0, S, S);
+                ctx.restore();
+            }
+        });
+        const tex = scene.textures.get('sheen');
+        for (let k = 0; k < SHEEN_FRAMES; k++) tex.add(k, 0, k * S * RES, 0, S * RES, S * RES);
+    }
+
+    // Hint glow behind the pieces of the solution
+    canvasTexture(scene, 'hintGlow', 128, 128, (ctx) => {
+        const g = ctx.createRadialGradient(64, 64, 20, 64, 64, 64);
+        g.addColorStop(0, 'rgba(92,255,184,0.95)');
+        g.addColorStop(0.45, 'rgba(52,211,153,0.55)');
+        g.addColorStop(1, 'rgba(52,211,153,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 128, 128);
     });
 
     // Steel shard for breaking junk (tinted per particle)

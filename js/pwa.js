@@ -51,6 +51,7 @@ export async function install() {
         showInstallHelp();
     } else if (mode === 'fullscreen') {
         try {
+            rememberFullscreen(true);
             await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
             if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('portrait');
         } catch { /* not allowed on this browser */ }
@@ -69,6 +70,16 @@ export function safeAreaTop() {
     probe.style.cssText = 'position:fixed;top:0;visibility:hidden;padding-top:env(safe-area-inset-top, 0px)';
     document.body.appendChild(probe);
     const v = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    probe.remove();
+    return v;
+}
+
+// Height taken by the home indicator / gesture bar at the bottom
+export function safeAreaBottom() {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;bottom:0;visibility:hidden;padding-bottom:env(safe-area-inset-bottom, 0px)';
+    document.body.appendChild(probe);
+    const v = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
     probe.remove();
     return v;
 }
@@ -135,3 +146,26 @@ function waitUntilIdle() {
         check();
     });
 }
+
+// ------------------------------------------------------------------ keep full screen
+
+// Android never lets a page (or app) block the bottom swipe: it shows the system bars and, in a
+// browser, can drop full screen. Once the player chose full screen, the next tap brings it back.
+const FS_KEY = 'mm-fullscreen';
+
+function rememberFullscreen(on) {
+    try { localStorage.setItem(FS_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+}
+
+function wantsFullscreen() {
+    try { return localStorage.getItem(FS_KEY) === '1'; } catch { return false; }
+}
+
+function restoreFullscreen() {
+    if (!wantsFullscreen() || isStandalone() || !document.fullscreenEnabled || document.fullscreenElement) return;
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+}
+
+// pointerup / touchend count as a user gesture for the Fullscreen API (pointerdown does not on touch)
+window.addEventListener('pointerup', restoreFullscreen, true);
+window.addEventListener('touchend', restoreFullscreen, true);

@@ -4,6 +4,7 @@
 :root {
     /* read by the game to keep the HUD clear of notches / status bars */
     --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * {
@@ -11,6 +12,11 @@
     padding: 0;
     box-sizing: border-box;
     -webkit-tap-highlight-color: transparent; /* Remove blue highlight on tap */
+}
+
+html, body {
+    /* no pull-to-refresh / page bounce from edge swipes */
+    overscroll-behavior: none;
 }
 
 body {

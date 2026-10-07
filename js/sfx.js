@@ -1,6 +1,7 @@
 // Synthesized sound effects (Web Audio, no files): tick-tock, bomb fuse, heat wave, steel junk,
 // and the rising "reward" tones that climb with every combo, bean and level.
 import { settings } from './settings.js';
+import { audioBus } from './audio.js';
 
 // C major pentatonic over three octaves: any run of these sounds musical
 const PENTA = [0, 2, 4, 7, 9];
@@ -18,9 +19,10 @@ export class Sfx {
         this.noise = null;
         this.tick = null;
         if (!this.ctx) return;
+        this.bus = audioBus(scene);
         this.out = this.ctx.createGain();
-        this.out.gain.value = 0.9;
-        this.out.connect(this.ctx.destination);
+        this.out.gain.value = 1;
+        this.out.connect(this.bus ? this.bus.sfx : this.ctx.destination);
         const len = this.ctx.sampleRate;
         this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
         const d = this.noise.getChannelData(0);
@@ -155,6 +157,7 @@ export class Sfx {
     // Heat wave: rising roar of hot air, low rumble and fire crackle
     heat() {
         if (!this.on()) return;
+        if (this.bus) this.bus.duck(0.45, 1100);
         this.noiseBurst({ dur: 1.2, vol: 0.55, type: 'lowpass', freq: 250, to: 4200, q: 1.2 });
         this.noiseBurst({ at: 0.15, dur: 1.1, vol: 0.3, type: 'bandpass', freq: 600, to: 1800, q: 2 });
         this.tone(70, { dur: 1.1, type: 'sine', vol: 0.35, attack: 0.08, to: 45 });
@@ -164,6 +167,11 @@ export class Sfx {
     }
 
     // ------------------------------------------------------------------ steel junk
+
+    // Big hit: music steps back so the effect cuts through
+    duck(depth, ms) {
+        if (this.bus) this.bus.duck(depth, ms);
+    }
 
     // Inharmonic partials = a struck steel plate
     clank(pitch = 1) {

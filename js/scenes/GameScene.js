@@ -1,10 +1,10 @@
 
 import { COLORS, CONSTANTS, PIECE_BODY, LEVELS, SCORING } from '../constants.js';
-import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX, JUNK_SIDE } from '../textures.js';
+import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX, JUNK_SIDE, SHEEN_FRAMES } from '../textures.js';
 import { Sfx } from '../sfx.js';
 import { INV, RES, view, setupCamera } from '../display.js';
 import { createStarfield } from '../starfield.js';
-import { safeAreaTop } from '../pwa.js';
+import { safeAreaTop, safeAreaBottom } from '../pwa.js';
 import { t } from '../i18n.js';
 import { settings, haptic, isDebug } from '../settings.js';
 import { chunkyButton, roundButton, modal, openSettings } from '../ui.js';
@@ -135,8 +135,11 @@ export class GameScene extends Phaser.Scene {
         ensureTextures(this);
         this.bg = createStarfield(this);
 
-        // Walls reach far above the screen so pieces spawned off-screen stay inside; no ceiling
-        this.matter.world.setBounds(0, -this.h, this.w, this.h * 2, 200, true, true, false, true);
+        // Walls reach far above the screen so pieces spawned off-screen stay inside; no ceiling.
+        // The floor sits a little above the screen edge so taps never start where Android's
+        // home swipe lives (no app can block that gesture).
+        this.floorGap = 14 + Math.round(safeAreaBottom());
+        this.matter.world.setBounds(0, -this.h, this.w, this.h * 2 - this.floorGap, 200, true, true, false, true);
         this.matter.world.on('beforeupdate', () => { this.physStart = performance.now(); });
         this.matter.world.on('afterupdate', () => {
             this.physMs = this.physMs * 0.9 + (performance.now() - this.physStart) * 0.1;
@@ -162,6 +165,10 @@ export class GameScene extends Phaser.Scene {
 
         // Auto-pause when the app goes to the background (call, notification, app switch)
         this.game.events.on(Phaser.Core.Events.HIDDEN, this.pauseGame, this);
+        // Leaving full screen (Android bottom swipe in a browser) pauses the game
+        const onFs = () => { if (!document.fullscreenElement) this.pauseGame(); };
+        document.addEventListener('fullscreenchange', onFs);
+        this.events.once('shutdown', () => document.removeEventListener('fullscreenchange', onFs));
         this.scale.on('resize', this.onResize, this);
         const offSettings = settings.onChange((key) => {
             if (key === 'music' && this.music && !this.gameOver) this.music.refresh();
@@ -367,14 +374,29 @@ export class GameScene extends Phaser.Scene {
         this.selRings = [0, 1, 2].map(() =>
             this.add.image(0, 0, 'ring').setTint(COLORS.selection).setDepth(12).setVisible(false).setScale(INV));
 
-        this.hintRings = [0, 1, 2].map(() => {
-            const ring = this.add.image(0, 0, 'ring').setTint(COLORS.hint).setDepth(12).setVisible(false).setScale(INV);
+        // Hint: a bright pulsing ring plus a green glow behind each piece of the solution
+        // (the other pieces are dimmed while a hint shows, see update)
+        this.hintRings = [0, 1, 2].map((i) => {
+            const ring = this.add.image(0, 0, 'ring').setTint(0x5cffb8).setDepth(12).setVisible(false).setScale(1.08 * INV);
             this.tweens.add({
-                targets: ring, scale: 1.12 * INV, alpha: 0.55,
-                duration: 450, yoyo: true, repeat: -1, ease: 'Sine.easeInOut'
+                targets: ring, scale: 1.3 * INV, alpha: 0.5,
+                duration: 420, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay: i * 140
             });
             return ring;
         });
+        this.hintGlows = [0, 1, 2].map((i) => {
+            const glow = this.add.image(0, 0, 'hintGlow').setDepth(9).setVisible(false)
+                .setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(DIAMETER * 2.3, DIAMETER * 2.3);
+            this.tweens.add({
+                targets: glow, alpha: 0.55, duration: 420, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay: i * 140
+            });
+            return glow;
+        });
+        this.dimmed = false;
+        // Diagonal glint that sweeps across every piece now and then (off with "less motion")
+        this.sheenOn = !settings.get('reduceMotion');
+        this.sheenNext = 3000;
+        this.sheenPos = null;
     }
 
     createFx() {
@@ -465,8 +487,26 @@ export class GameScene extends Phaser.Scene {
 
             const hp = this.hintPieces[i];
             const hring = this.hintRings[i];
-            if (hp && hp.alive) hring.setVisible(true).setPosition(hp.img.x, hp.img.y);
-            else hring.setVisible(false);
+            const hglow = this.hintGlows[i];
+            if (hp && hp.alive) {
+                hring.setVisible(true).setPosition(hp.img.x, hp.img.y);
+                hglow.setVisible(true).setPosition(hp.img.x, hp.img.y);
+            } else {
+                hring.setVisible(false);
+                hglow.setVisible(false);
+            }
+        }
+
+        if (this.sheenOn) this.updateSheen(delta);
+
+        // While a hint shows, everything that is not part of it steps back
+        const dim = this.hintPieces.length > 0 && !this.gameOver;
+        if (dim || this.dimmed) {
+            for (let i = 0; i < pieces.length; i++) {
+                const p = pieces[i];
+                p.img.alpha = dim && !this.hintPieces.includes(p) ? 0.42 : 1;
+            }
+            this.dimmed = dim;
         }
 
         if (this.hand) {
@@ -632,6 +672,40 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
+    // ------------------------------------------------------------------ sheen
+
+    // A band along x + y crosses the screen in ~0.9 s every 5-7 s. Pieces inside the band show the
+    // matching frame of the glint (pooled per piece, one shared texture). Idle frames cost one compare.
+    updateSheen(delta) {
+        if (this.sheenPos === null) {
+            this.sheenNext -= delta;
+            if (this.sheenNext > 0 || this.paused) return;
+            this.sheenPos = -R * 3;
+        }
+        const end = this.w + this.h + R * 3;
+        this.sheenPos += (end + R * 3) * (delta / 900);
+        const span = R * 2.6;
+        let active = this.sheenPos < end;
+        for (const p of this.pieces) {
+            if (p.type === 'junk') continue;
+            const rel = (this.sheenPos - (p.img.x + p.img.y)) / span;   // -1..1 while the band crosses it
+            if (active && rel > -1 && rel < 1) {
+                const frame = Math.round(((rel + 1) / 2) * (SHEEN_FRAMES - 1));
+                if (!p.sheen) {
+                    p.sheen = this.add.image(0, 0, 'sheen', frame).setScale(INV).setDepth(11.5)
+                        .setBlendMode(Phaser.BlendModes.ADD);
+                }
+                p.sheen.setFrame(frame).setPosition(p.img.x, p.img.y).setVisible(true).setAlpha(p.img.alpha);
+            } else if (p.sheen && p.sheen.visible) {
+                p.sheen.setVisible(false);
+            }
+        }
+        if (!active) {
+            this.sheenPos = null;
+            this.sheenNext = 5000 + Math.random() * 2000;
+        }
+    }
+
     // ------------------------------------------------------------------ pieces
 
     // A game starts with a dozen pieces already tumbling in during the countdown, so every
@@ -723,6 +797,7 @@ export class GameScene extends Phaser.Scene {
     removePiece(p) {
         if (!p.alive) return;
         p.alive = false;
+        if (p.sheen) p.sheen.destroy();
         this.clearFuse(p);
         this.matter.world.remove(p.body);
         this.tweens.killTweensOf(p.img);
@@ -1199,6 +1274,7 @@ export class GameScene extends Phaser.Scene {
         const radius = R * 3.2 * 1.3;   // +30% reach
         const pushRadius = radius * 2;
         this.playSound('explosionSound', 0.9);
+        this.sfx.duck(0.35, 600);
         this.shake(320, 0.02);
         haptic('bomb');
         this.hitStop(90);
@@ -1252,35 +1328,53 @@ export class GameScene extends Phaser.Scene {
         const ends = hits.map((q) => ({ x: q.body.position.x, y: q.body.position.y }));
         ends.push({ x: this.targetX, y: this.eqY });
 
-        const gfx = this.add.graphics().setDepth(1000).setBlendMode(Phaser.BlendModes.ADD);
-        const strike = () => {
-            gfx.clear();
-            gfx.fillStyle(0xbae6fd, 0.35);
-            gfx.fillCircle(x, y, 26);
-            gfx.fillStyle(0xffffff, 0.8);
-            gfx.fillCircle(x, y, 10);
-            ends.forEach((e) => this.drawBolt(gfx, x, y, e.x, e.y));
-        };
-        strike();
-        this.time.delayedCall(60, strike);
-        this.time.delayedCall(120, strike);
-        this.flash(120, 120, 200, 255);
-        this.shake(220, 0.008);
-        haptic('bomb');
+        // 1) Charge: a crackling orb gathers at the recycle piece
+        const orb = this.add.image(x, y, 'hintGlow').setTint(0x7dd3fc).setBlendMode(Phaser.BlendModes.ADD)
+            .setDepth(999).setDisplaySize(30, 30);
+        this.tweens.add({ targets: orb, displayWidth: 150, displayHeight: 150, duration: 260, ease: 'Cubic.easeIn' });
+        this.sparks.emitParticleAt(x, y, 10);
+        haptic('special');
 
-        this.time.delayedCall(70, () => {
-            hits.forEach((q) => {
+        // 2) Strike: bolts re-drawn every 65 ms for ~0.8 s so they crackle and dance
+        const gfx = this.add.graphics().setDepth(1000).setBlendMode(Phaser.BlendModes.ADD);
+        const strike = (power) => {
+            gfx.clear();
+            gfx.fillStyle(0xbae6fd, 0.35 * power);
+            gfx.fillCircle(x, y, 34);
+            gfx.fillStyle(0xffffff, 0.85 * power);
+            gfx.fillCircle(x, y, 13);
+            ends.forEach((e) => this.drawBolt(gfx, x, y, e.x, e.y, power));
+        };
+        const STRIKE_MS = 800;
+        this.time.delayedCall(260, () => {
+            this.flash(160, 140, 210, 255);
+            this.shake(380, 0.011);
+            haptic('bomb');
+            this.playSound('sparksSound', 0.9);
+            this.sfx.duck(0.4, 900);
+            for (let k = 0; k * 65 < STRIKE_MS; k++) {
+                this.time.delayedCall(k * 65, () => strike(1 - (k * 65) / STRIKE_MS * 0.35));
+            }
+            // Hits land a beat after the first strike, each with its own burst
+            hits.forEach((q, i) => this.time.delayedCall(90 + i * 45, () => {
                 if (!q.alive) return;
                 const qx = q.body.position.x;
                 const qy = q.body.position.y;
-                this.sparks.emitParticleAt(qx, qy, 10);
+                this.sparks.emitParticleAt(qx, qy, 14);
                 this.burst.setParticleTint(0x7dd3fc);
-                this.burst.emitParticleAt(qx, qy, 8);
+                this.burst.emitParticleAt(qx, qy, 12);
+                const ring = this.add.image(qx, qy, 'ring').setTint(0x7dd3fc).setBlendMode(Phaser.BlendModes.ADD)
+                    .setDepth(998).setScale(0.6 * INV);
+                this.tweens.add({ targets: ring, scale: 1.6 * INV, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
                 this.removePiece(q);
+            }));
+            this.time.delayedCall(90, () => this.scrambleTarget());
+            // 3) Afterglow: the last bolts fade out slowly
+            this.tweens.add({
+                targets: [gfx, orb], alpha: 0, delay: STRIKE_MS, duration: 450,
+                onComplete: () => { gfx.destroy(); orb.destroy(); }
             });
-            this.scrambleTarget();
         });
-        this.tweens.add({ targets: gfx, alpha: 0, delay: 170, duration: 260, onComplete: () => gfx.destroy() });
     }
 
     // Target flickers through random numbers like a slot machine, then lands on a new one
@@ -1289,10 +1383,10 @@ export class GameScene extends Phaser.Scene {
         this.tweens.killTweensOf(txt);
         txt.setScale(1.15);
         this.time.addEvent({
-            delay: 45, repeat: 8,
+            delay: 50, repeat: 15,
             callback: () => { if (txt.active) txt.setText(String(1 + Math.floor(Math.random() * 45))); }
         });
-        this.time.delayedCall(430, () => {
+        this.time.delayedCall(800, () => {
             if (this.gameOver) return;
             this.newTarget();
             this.ensureSolvable();
@@ -1321,8 +1415,9 @@ export class GameScene extends Phaser.Scene {
         return pts;
     }
 
-    strokeBolt(g, pts, width) {
-        [[width * 5, 0x38bdf8, 0.14], [width * 2.4, 0x7dd3fc, 0.45], [width, 0xffffff, 1]].forEach(([lw, color, alpha]) => {
+    strokeBolt(g, pts, width, power = 1) {
+        [[width * 6, 0x38bdf8, 0.16], [width * 2.6, 0x7dd3fc, 0.5], [width, 0xffffff, 1]].forEach(([lw, color, a]) => {
+            const alpha = a * power;
             g.lineStyle(lw, color, alpha);
             g.beginPath();
             g.moveTo(pts[0].x, pts[0].y);
@@ -1331,9 +1426,9 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    drawBolt(g, x1, y1, x2, y2) {
+    drawBolt(g, x1, y1, x2, y2, power = 1) {
         const main = this.boltPoints(x1, y1, x2, y2);
-        this.strokeBolt(g, main, 2.2);
+        this.strokeBolt(g, main, 3, power);
         // 1-3 thinner forks that split off the main channel and die out
         const forks = 1 + Math.floor(Math.random() * 3);
         for (let f = 0; f < forks; f++) {
@@ -1341,10 +1436,10 @@ export class GameScene extends Phaser.Scene {
             const p = main[Math.min(i, main.length - 1)];
             const dir = Math.atan2(y2 - y1, x2 - x1) + (Math.random() < 0.5 ? -1 : 1) * Phaser.Math.FloatBetween(0.35, 0.9);
             const len = Math.hypot(x2 - x1, y2 - y1) * Phaser.Math.FloatBetween(0.15, 0.3);
-            this.strokeBolt(g, this.boltPoints(p.x, p.y, p.x + Math.cos(dir) * len, p.y + Math.sin(dir) * len, 0.4), 1);
+            this.strokeBolt(g, this.boltPoints(p.x, p.y, p.x + Math.cos(dir) * len, p.y + Math.sin(dir) * len, 0.4), 1.3, power);
         }
-        g.fillStyle(0xe0f2fe, 0.6);
-        g.fillCircle(x2, y2, 9);
+        g.fillStyle(0xe0f2fe, 0.6 * power);
+        g.fillCircle(x2, y2, 12);
     }
 
     // Bomb fuse: sparks fly from the wick, the bomb flashes faster and faster, hisses, then blows
@@ -1500,8 +1595,14 @@ export class GameScene extends Phaser.Scene {
         this.playSound('clickbutton', 0.6);
     }
 
+    // Copies of the same sample started in the same instant stack up and clip: keep one per 60 ms
     playSound(key, volume) {
-        if (settings.get('sfx') && this.cache.audio.exists(key)) this.sound.play(key, { volume });
+        if (!settings.get('sfx') || !this.cache.audio.exists(key)) return;
+        const now = performance.now();
+        this.lastPlay = this.lastPlay || {};
+        if (now - (this.lastPlay[key] || 0) < 60) return;
+        this.lastPlay[key] = now;
+        this.sound.play(key, { volume });
     }
 
     // Camera shake / flash respect the "less motion" setting
@@ -1689,7 +1790,7 @@ export class GameScene extends Phaser.Scene {
         this.w = w;
         this.h = h;
 
-        this.matter.world.setBounds(0, -h, w, h * 2, 200, true, true, false, true);
+        this.matter.world.setBounds(0, -h, w, h * 2 - this.floorGap, 200, true, true, false, true);
         for (const p of this.pieces) {
             const pos = p.body.position;
             this.Body.setPosition(p.body, { x: Phaser.Math.Clamp(pos.x, R + 1, w - R - 1), y: pos.y + dh });

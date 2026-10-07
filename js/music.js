@@ -3,6 +3,7 @@
 // a reverb and an echo bus, a compressor, and "pumping" (the pads duck on every kick).
 // Songs cycle through sections: intro (no lead), theme, theme with variation, breakdown (no kick).
 import { settings } from './settings.js';
+import { audioBus } from './audio.js';
 
 const midi = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -72,7 +73,7 @@ function impulse(ctx, seconds = 2.4, decay = 3) {
 }
 
 class Synth {
-    constructor(ctx) {
+    constructor(ctx, output) {
         this.ctx = ctx;
         // master -> compressor -> out
         this.master = ctx.createGain();
@@ -82,7 +83,7 @@ class Synth {
         comp.ratio.value = 4;
         comp.attack.value = 0.005;
         comp.release.value = 0.2;
-        this.master.connect(comp).connect(ctx.destination);
+        this.master.connect(comp).connect(output || ctx.destination);
 
         // pumped bus (pads, bass, arp) ducks on each kick
         this.pump = ctx.createGain();
@@ -392,7 +393,8 @@ export class MusicDirector {
     constructor(scene) {
         this.scene = scene;
         const ctx = scene.sound.context;
-        this.synth = ctx ? new Synth(ctx) : null;   // Web Audio only (silent on the HTML5 audio fallback)
+        const bus = audioBus(scene);
+        this.synth = ctx ? new Synth(ctx, bus && bus.music) : null;   // Web Audio only (silent on the HTML5 audio fallback)
         this.current = null;
         this.danger = false;
         this.paused = false;
