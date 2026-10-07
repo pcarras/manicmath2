@@ -1,7 +1,8 @@
 // Direct phone-to-phone link (WebRTC data channel) for the TEAM mode, where both phones show the
-// very same board. The room (net.js) only carries the handshake: one offer and one answer, each
-// with all its network candidates, so a slow poll is enough. Public STUN servers help phones
-// behind home routers find each other; nothing of the game goes through a server.
+// very same board. The room (net.js) only carries the handshake: an offer, an answer and the network
+// candidates as they are found (trickle ICE), so the link can open as soon as any route works.
+// STUN helps phones behind home routers find each other and a TURN relay (api/turn.js) is the way
+// out when they cannot; once linked, the game itself does not go through the room server.
 const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
 
 // STUN plus, when configured on the server (api/turn.js), a TURN relay for phones that cannot
@@ -44,10 +45,31 @@ export class Link {
         this.ready = new Promise((resolve) => { this.resolveReady = resolve; });
         this.pending = [];
         this.inbox = [];
+        this.chain = Promise.resolve();       // signalling messages are handled one at a time
+        this.candQueue = [];                  // candidates that arrived before their offer / answer
         this.offSignal = room.onEvent((ev) => {
-            if (this.pc) this.onSignal(ev);
+            if (ev.type !== 'signal') return;
+            if (this.pc) this.enqueue(ev);
             else this.pending.push(ev);
         });
+    }
+
+    // A short trace of the linking (shown in the lobby when it takes long, handy to find out why)
+    note(what) {
+        (this.trace = this.trace || []).push(`${Math.round(performance.now() - (this.goAt || performance.now()))}ms ${what}`);
+        if (this.trace.length > 40) this.trace.shift();
+    }
+
+    enqueue(ev) {
+        this.chain = this.chain.then(() => this.onSignal(ev)).catch(() => {});
+    }
+
+    // Begin linking. Called when both players are in the room: the host's offer must not go out (and
+    // its retry clock must not run) while it is still waiting for the other player.
+    go() {
+        if (this.started) return;
+        this.started = true;
+        this.goAt = performance.now();
         this.start();
     }
 
@@ -56,7 +78,7 @@ export class Link {
         this.hasTurn = this.servers.some((s) => [].concat(s.urls).some((u) => /^turns?:/.test(u)));
         if (this.closed) return;
         this.newPc(0);
-        this.pending.splice(0).forEach((ev) => this.onSignal(ev));
+        this.pending.splice(0).forEach((ev) => this.enqueue(ev));
     }
 
     // A fresh peer connection. Attempt 0 lets the browser pick any route; later attempts force the
@@ -72,6 +94,14 @@ export class Link {
             iceTransportPolicy: attempt >= 1 && this.hasTurn ? 'relay' : 'all'
         });
         const pc = this.pc;
+        this.candQueue = [];
+        // Every candidate goes to the other phone the moment it is found
+        pc.addEventListener('icecandidate', (e) => {
+            if (pc !== this.pc || this.closed || !e.candidate) return;
+            this.note(`found ${e.candidate.type || '?'}`);
+            this.room.send({ type: 'signal', kind: 'cand', sig: JSON.stringify(e.candidate), try: attempt });
+        });
+        pc.addEventListener('iceconnectionstatechange', () => this.note(`ice ${pc.iceConnectionState}`));
         pc.addEventListener('connectionstatechange', () => {
             if (pc !== this.pc) return;
             const st = pc.connectionState;
@@ -91,7 +121,7 @@ export class Link {
     // What the lobby shows when linking takes long (helps finding out why)
     diag() {
         const pc = this.pc;
-        if (!pc) return 'starting';
+        if (!pc) return 'waiting';
         return `${this.attempt > 0 ? 'relay ' : ''}${pc.signalingState}/${pc.iceConnectionState}`;
     }
 
@@ -101,6 +131,7 @@ export class Link {
         dc.addEventListener('open', () => {
             if (dc.label === 'snap') return;
             this.open = true;
+            this.openedAt = performance.now();
             this.resolveReady(true);
         });
         dc.addEventListener('message', (e) => {
@@ -121,31 +152,42 @@ export class Link {
     async makeOffer(attempt) {
         const pc = this.pc;
         await pc.setLocalDescription(await pc.createOffer());
-        await gathered(pc, attempt > 0 ? 5000 : GATHER_MS);
         if (pc !== this.pc || this.closed) return;
+        this.note('offer sent');
         this.room.send({ type: 'signal', kind: 'offer', sig: JSON.stringify(pc.localDescription), try: attempt });
-        // Not linked after a while: try again through the relay
+        // Not linked after a while: start over, this time forcing the relay
         this.retryTimer = setTimeout(() => {
             if (!this.open && !this.closed && this.attempt < 2) this.newPc(this.attempt + 1);
-        }, 9000);
+        }, attempt === 0 ? 8000 : 10000);
+    }
+
+    async addCand(cand) {
+        try { await this.pc.addIceCandidate(cand); } catch { /* a late or duplicate candidate */ }
     }
 
     async onSignal(ev) {
         if (ev.type !== 'signal' || this.closed) return;
+        const attempt = ev.try || 0;
+        this.note(`got ${ev.kind} ${attempt}`);
         try {
-            const desc = JSON.parse(ev.sig);
-            const attempt = ev.try || 0;
+            const body = JSON.parse(ev.sig);
             if (ev.kind === 'offer' && !this.host) {
                 if (this.open || attempt < this.attempt) return;
                 if (attempt > this.attempt) this.newPc(attempt);
                 const pc = this.pc;
-                await pc.setRemoteDescription(desc);
+                await pc.setRemoteDescription(body);
                 await pc.setLocalDescription(await pc.createAnswer());
-                await gathered(pc, attempt > 0 ? 5000 : GATHER_MS);
                 if (pc !== this.pc || this.closed) return;
                 this.room.send({ type: 'signal', kind: 'answer', sig: JSON.stringify(pc.localDescription), try: attempt });
-            } else if (ev.kind === 'answer' && this.host && attempt === this.attempt && !this.pc.currentRemoteDescription) {
-                await this.pc.setRemoteDescription(desc);
+                this.candQueue.splice(0).forEach((c) => this.addCand(c));
+            } else if (ev.kind === 'answer' && this.host) {
+                if (attempt !== this.attempt || this.pc.currentRemoteDescription) return;
+                await this.pc.setRemoteDescription(body);
+                this.candQueue.splice(0).forEach((c) => this.addCand(c));
+            } else if (ev.kind === 'cand') {
+                if (attempt !== this.attempt) return;
+                if (this.pc.remoteDescription) await this.addCand(body);
+                else this.candQueue.push(body);
             }
         } catch { /* a broken handshake is retried by the host */ }
     }

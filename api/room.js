@@ -70,7 +70,7 @@ function cleanEvent(ev) {
     if (Array.isArray(ev.seqs)) out.seqs = ev.seqs.filter((s) => int(s, 0, 1000000)).slice(0, 3);
     // WebRTC handshake for the TEAM mode (p2p.js): one offer and one answer
     if (ev.type === 'signal') {
-        if (!['offer', 'answer'].includes(ev.kind) || typeof ev.sig !== 'string' || ev.sig.length > 16000) return null;
+        if (!['offer', 'answer', 'cand'].includes(ev.kind) || typeof ev.sig !== 'string' || ev.sig.length > 16000) return null;
         out.kind = ev.kind;
         out.sig = ev.sig;
         if (Number.isInteger(ev.try) && ev.try >= 0 && ev.try <= 5) out.try = ev.try;

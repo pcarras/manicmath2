@@ -1932,6 +1932,7 @@ export class GameScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(150);
         this.updateMpHud();
         if (this.team) this.watchRoute();
+        room.pollMs = 0;
         const offEv = room.onEvent((ev) => this.onNet(ev));
         if (this.link) {
             this.link.send({ meta: this.hostMeta() });

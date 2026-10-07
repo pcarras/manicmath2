@@ -80,7 +80,7 @@ export class Room {
         const tick = async () => {
             if (this.closed) return;
             await this.poll();
-            if (!this.closed) this.timer = setTimeout(tick, POLL_MS);
+            if (!this.closed) this.timer = setTimeout(tick, this.pollMs || POLL_MS);
         };
         tick();
     }

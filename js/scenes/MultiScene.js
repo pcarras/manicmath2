@@ -150,6 +150,10 @@ export class MultiScene extends Phaser.Scene {
             p0.setText(`1. ${name(0)}`);
             p1.setText(`2. ${name(1)}`);
             if (failures > 6) status.setText(t('roomOffline'));
+            if (players[0] && players[1] && link) {
+                link.go();
+                room.pollMs = link.open ? 0 : 180;   // answer the handshake quickly while linking
+            }
             if (startAt) {
                 const left = Math.ceil((startAt - room.serverNow()) / 1000);
                 // TEAM: both phones show one board, so they must be linked directly before starting
@@ -164,7 +168,7 @@ export class MultiScene extends Phaser.Scene {
                 if (left > 0) status.setText(t('roomStartsIn', { n: left }));
                 else if (!linked) {
                     status.setText(`${t('linking')}\n${link ? link.diag() : ''}`);
-                    if (left < -15 && !this.starting) {
+                    if (left < -30 && !this.starting) {
                         this.starting = true;
                         link.close();
                         room.close();
