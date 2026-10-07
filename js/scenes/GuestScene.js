@@ -67,6 +67,7 @@ export class GuestScene extends GameScene {
         });
 
         this.peer.onMessage((msg) => this.onHost(msg));
+        this.peer.send({ ready: true });          // the host answers with every texture name
         this.peer.onClose(() => { if (!this.gameOver) this.endGame('left'); });
         this.setupMulti();
         this.gameStarted = true;
@@ -308,10 +309,13 @@ export class GuestScene extends GameScene {
         this.burst.emitParticleAt(s.img.x, s.img.y, 8);
         s.img.destroy();
         if (s.ice) s.ice.destroy();
+        if (s.sheen) s.sheen.destroy();
         this.sprites.delete(id);
     }
 
-    update() {
+    update(time, delta) {
+        // The diagonal glint that sweeps over the pieces every few seconds (as on the host)
+        if (this.sheenOn) this.updateSheen(delta, [...this.sprites.values()]);
         const snaps = this.snaps;
         this.selRings.forEach((r) => r.setVisible(false));
         this.mateRings.forEach((r) => r.setVisible(false));
@@ -343,7 +347,7 @@ export class GuestScene extends GameScene {
                 if (!key || !this.textures.exists(key)) continue;
                 const from0 = A.map.get(id) || to;
                 const img = this.add.image(from0[0], from0[1], key).setDepth(10).setScale(INV);
-                sp = { img, ice: null, key, alive: true };
+                sp = { img, ice: null, key, alive: true, type: key.includes('junk') ? 'junk' : 'piece' };
                 this.sprites.set(id, sp);
             }
             const from = A.map.get(id) || to;

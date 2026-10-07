@@ -43,6 +43,7 @@ export class Link {
         this.hasTurn = false;
         this.ready = new Promise((resolve) => { this.resolveReady = resolve; });
         this.pending = [];
+        this.inbox = [];
         this.offSignal = room.onEvent((ev) => {
             if (this.pc) this.onSignal(ev);
             else this.pending.push(ev);
@@ -106,6 +107,12 @@ export class Link {
             let msg;
             try { msg = JSON.parse(e.data); } catch { return; }
             if (msg.meta) this.meta = msg.meta;       // the host's board size (see GameScene.hostMeta)
+            // Before the game scene is ready nobody listens: keep what must not be lost (texture
+            // names, board size); board frames and effects would be stale anyway
+            if (!this.listeners.size) {
+                if (msg.keys || msg.meta) this.inbox.push(msg);
+                return;
+            }
             this.listeners.forEach((fn) => fn(msg));
         });
         dc.addEventListener('close', () => { if (dc === this.dc || dc === this.fast) this.lost(); });
@@ -160,7 +167,29 @@ export class Link {
 
     onMessage(fn) {
         this.listeners.add(fn);
+        this.inbox.splice(0).forEach((m) => fn(m));
         return () => this.listeners.delete(fn);
+    }
+
+    // How the two phones are linked: { kind: 'lan' | 'direct' | 'relay', rtt: ms } (null if unknown yet)
+    async route() {
+        if (!this.pc || !this.open) return null;
+        try {
+            const stats = await this.pc.getStats();
+            let pair = null;
+            stats.forEach((r) => {
+                if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
+            });
+            if (!pair) stats.forEach((r) => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pair = r; });
+            if (!pair) return null;
+            const a = stats.get(pair.localCandidateId);
+            const b = stats.get(pair.remoteCandidateId);
+            const types = [a && a.candidateType, b && b.candidateType];
+            const kind = types.includes('relay') ? 'relay' : types.every((x) => x === 'host') ? 'lan' : 'direct';
+            return { kind, rtt: pair.currentRoundTripTime ? Math.round(pair.currentRoundTripTime * 1000) : null };
+        } catch {
+            return null;
+        }
     }
 
     onClose(fn) {

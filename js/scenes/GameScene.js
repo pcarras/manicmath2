@@ -737,7 +737,7 @@ export class GameScene extends Phaser.Scene {
 
     // A band along x + y crosses the screen in ~0.9 s every 5-7 s. Pieces inside the band show the
     // matching frame of the glint (pooled per piece, one shared texture). Idle frames cost one compare.
-    updateSheen(delta) {
+    updateSheen(delta, list = this.pieces) {
         if (this.sheenPos === null) {
             this.sheenNext -= delta;
             if (this.sheenNext > 0 || this.paused) return;
@@ -747,7 +747,7 @@ export class GameScene extends Phaser.Scene {
         this.sheenPos += (end + R * 3) * (delta / 900);
         const span = R * 2.6;
         let active = this.sheenPos < end;
-        for (const p of this.pieces) {
+        for (const p of list) {
             if (p.type === 'junk') continue;
             const rel = (this.sheenPos - (p.img.x + p.img.y)) / span;   // -1..1 while the band crosses it
             if (active && rel > -1 && rel < 1) {
@@ -1931,6 +1931,7 @@ export class GameScene extends Phaser.Scene {
             backgroundColor: 'rgba(11,6,32,0.55)', padding: { x: 8, y: 3 }
         }).setOrigin(0.5).setDepth(150);
         this.updateMpHud();
+        if (this.team) this.watchRoute();
         const offEv = room.onEvent((ev) => this.onNet(ev));
         if (this.link) {
             this.link.send({ meta: this.hostMeta() });
@@ -1951,6 +1952,25 @@ export class GameScene extends Phaser.Scene {
             // Give the last event a moment to go out before leaving the room
             setTimeout(() => room.close(), 1500);
         });
+    }
+
+    // TEAM: a small line under the scores telling how the phones are linked (direct / relay, delay)
+    watchRoute() {
+        const lk = this.link || this.peer;
+        if (!lk) return;
+        this.routeText = this.add.text(this.w / 2, this.uiHeight + 32, '', {
+            fontFamily: 'Roboto', fontSize: '10px', color: '#a5a8ff', stroke: '#0b0620', strokeThickness: 3
+        }).setOrigin(0.5).setDepth(150);
+        const tick = async () => {
+            if (this.gameOver || !this.sys.isActive()) return;
+            const r = await lk.route();
+            if (r && this.routeText.active) {
+                const kind = { lan: t('routeLan'), direct: t('routeDirect'), relay: t('routeRelay') }[r.kind];
+                this.routeText.setText(`🔗 ${kind}${r.rtt !== null ? ` · ${r.rtt} ms` : ''}`);
+            }
+            this.time.delayedCall(3000, tick);
+        };
+        this.time.delayedCall(1500, tick);
     }
 
     updateMpHud() {
@@ -2161,6 +2181,8 @@ export class GameScene extends Phaser.Scene {
         }
         // New texture names go on the reliable channel (the board stream may lose frames)
         if (fresh) this.link.send({ keys: fresh });
+        this.keyTick = (this.keyTick || 0) + 1;
+        if (this.keyTick % 60 === 0 || this.sendAllKeys) this.sendKeys();
         this.link.sendFast({
             ts: Math.round(performance.now()), s: flat, t: this.target,
             sc: [this.score, this.mate.score], so: [this.solved - this.mate.solved, this.mate.solved],
@@ -2170,8 +2192,18 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
+    // Every texture name the other phone may need (it can miss the first ones while its scene loads)
+    sendKeys() {
+        this.sendAllKeys = false;
+        const all = {};
+        this.keyIdx.forEach((k, key) => { all[k] = key; });
+        this.link.send({ keys: all });
+        this.link.send({ meta: this.hostMeta() });
+    }
+
     onGuest(msg) {
         if (this.gameOver) return;
+        if (msg.ready) { this.sendKeys(); return; }
         if (msg.tap !== undefined) this.guestTap(msg.tap);
         else if (msg.untap !== undefined) this.guestDeselect(msg.untap);
         else if (msg.quit) this.endGame('left');
