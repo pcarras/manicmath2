@@ -48,7 +48,7 @@ Depois é colar no valor do segredo.
 
 ## 4. Criar a app na Play Console
 
-1. **Criar app**: nome `Manic Math: Contas Rápidas`, idioma predefinido Português (Portugal), **Jogo**, **Gratuito**.
+1. **Criar app**: **Jogo**, **Gratuito**. Idioma predefinido: **Inglês (Estados Unidos)**, nome `Manic Math: Fast Maths`. É o que a Google mostra a quem tem o telemóvel noutros idiomas, por isso convém ser inglês. Depois, em **Presença na loja → Ficha principal → Gerir traduções**, acrescenta **Português (Portugal)** com o nome `Manic Math: Contas Rápidas`. Os textos e as capturas dos dois idiomas estão em `fastlane/metadata/android/en-US` e `pt-PT`. Se uma tradução não tiver imagens próprias, a Google usa as do idioma predefinido, por isso as capturas em português só aparecem a quem tem o telemóvel em português se as carregares na tradução.
 2. Em **Conteúdo da app**, preencha:
    - Política de privacidade: `https://manic-math-2-pwa.vercel.app/privacy.html`
    - Anúncios: **Não**
