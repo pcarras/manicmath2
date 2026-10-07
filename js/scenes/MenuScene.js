@@ -6,7 +6,7 @@ import { isDebug, toggleDebug, settings } from '../settings.js';
 import { stats, daily } from '../stats.js';
 import { chunkyButton, roundButton, openSettings, modal } from '../ui.js';
 import { view, setupCamera, PHONE } from '../display.js';
-import { beans, onProgressChange, streakInfo, missions, missionText } from '../progress.js';
+import { beans, onProgressChange, streakInfo, missions, missionText, beansLabel } from '../progress.js';
 import { syncBests } from '../ranking.js';
 import { ensureTextures } from '../textures.js';
 import { createTitle, createPieceRain } from '../title.js';
@@ -60,6 +60,13 @@ export class MenuScene extends Phaser.Scene {
             });
         }, { radius: 20, depth: 20, color: 0xb45309 });
 
+        // Learning analysis (next to the achievements)
+        roundButton(this, 84, top + 34, 'chart', () => {
+            this.cameras.main.fade(200, 0, 0, 0, false, (cam, progress) => {
+                if (progress === 1) this.scene.start('AnalysisScene');
+            });
+        }, { radius: 20, depth: 20, color: 0x0d9488 });
+
         // Settings (top right)
         roundButton(this, w - 34, top + 34, 'gear', () => {
             openSettings(this, { onClose: (langChanged) => { if (langChanged) this.scene.restart(); } });
@@ -71,11 +78,11 @@ export class MenuScene extends Phaser.Scene {
         pill.fillRoundedRect(w / 2 - 54, top + 18, 108, 32, 16);
         pill.lineStyle(2, 0xc68a4a, 0.9);
         pill.strokeRoundedRect(w / 2 - 54, top + 18, 108, 32, 16);
-        const beansText = this.add.text(w / 2, top + 34, `☕ ${beans()}`, {
+        const beansText = this.add.text(w / 2, top + 34, `☕ ${beansLabel()}`, {
             fontFamily: 'Righteous', fontSize: '18px', color: '#ffd9a8'
         }).setOrigin(0.5).setDepth(20);
         const offBeans = onProgressChange(() => {
-            if (beansText.active) beansText.setText(`☕ ${beans()}`);
+            if (beansText.active) beansText.setText(`☕ ${beansLabel()}`);
         });
 
         // Main buttons
@@ -108,7 +115,7 @@ export class MenuScene extends Phaser.Scene {
         // Modes | Training side by side
         const half = (bw - 10) / 2;
         chunkyButton(this, w / 2 - half / 2 - 5, y, t('twoPlayers'), 0xf59e0b, go('MultiScene'),
-            { width: half, height: 50, fontSize: half < 110 ? 17 : 20, delay: 340 });
+            { width: half, height: 50, fontSize: Math.min(20, Math.floor((half - 14) / (t('twoPlayers').length * 0.62))), delay: 340 });
         chunkyButton(this, w / 2 + half / 2 + 5, y, t('training'), 0x0ea5e9, go('TrainingScene'),
             { width: half, height: 50, fontSize: half < 110 ? 17 : 20, delay: 360 });
         y += gap - 4;

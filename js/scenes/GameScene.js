@@ -12,6 +12,7 @@ import { chunkyButton, roundButton, modal, openSettings } from '../ui.js';
 import { stats, daily, todayKey, modeBest } from '../stats.js';
 import { report, achievementText, drawMedal } from '../achievements.js';
 import { MusicDirector } from '../music.js';
+import { logEquation } from '../analysis.js';
 import { track, addBeans, completeDaily, missionText, currentItem } from '../progress.js';
 import { submitScore, shareText, share } from '../ranking.js';
 
@@ -985,7 +986,9 @@ export class GameScene extends Phaser.Scene {
             this.validating = false;
             return;
         }
-        if (calc(a.value, o.value, b.value) === this.target) this.onSuccess();
+        const ok = calc(a.value, o.value, b.value) === this.target;
+        if (!this.tutorial) logEquation(a.value, o.value, b.value, this.target, ok);
+        if (ok) this.onSuccess();
         else this.onFail();
     }
 

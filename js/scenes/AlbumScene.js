@@ -3,7 +3,7 @@ import { safeAreaTop } from '../pwa.js';
 import { t } from '../i18n.js';
 import { chunkyButton, modal } from '../ui.js';
 import { RES, view, setupCamera } from '../display.js';
-import { beans, addBeans } from '../progress.js';
+import { beans, addBeans, beansLabel } from '../progress.js';
 import { STICKERS, STICKER_PRICE, stickerText, ownedStickers, freeStickers, claimSticker } from '../album.js';
 import { haptic } from '../settings.js';
 
@@ -69,7 +69,7 @@ export class AlbumScene extends Phaser.Scene {
         const add = (o) => { this.cards.push(o); return o; };
         const owned = ownedStickers();
         const free = freeStickers();
-        this.info.setText(`${owned.length} / ${STICKERS.length}   ·   ☕ ${beans()}`);
+        this.info.setText(`${owned.length} / ${STICKERS.length}   ·   ☕ ${beansLabel()}`);
         this.free.setText(free > 0 ? t('freeStickers', { n: free }) : t('freeStickerHow'));
 
         const gap = 10;

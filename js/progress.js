@@ -2,6 +2,7 @@
 // daily missions, piece themes and the player's leaderboard name.
 import { lang } from './i18n.js';
 import { todayKey } from './stats.js';
+import { settings } from './settings.js';
 
 const KEY = 'mm-progress';
 
@@ -58,11 +59,29 @@ function daysBetween(a, b) {
 
 // ------------------------------------------------------------------ beans
 
+// GOD mode (settings): unlimited beans for testing; nothing is really spent
+export const GOD_BEANS = 999999;
+const god = () => !!settings.get('god');
+
 export function beans() {
-    return load().beans;
+    return god() ? GOD_BEANS : load().beans;
+}
+
+// What to show in the wallet: ∞ in GOD mode
+export function beansLabel() {
+    return god() ? '∞' : String(load().beans);
+}
+
+// Takes `price` beans from the state; false when there are not enough (always true in GOD mode)
+function pay(s, price) {
+    if (god()) return true;
+    if (s.beans < price) return false;
+    s.beans -= price;
+    return true;
 }
 
 export function addBeans(n) {
+    if (n < 0 && god()) return beans();
     const s = load();
     s.beans = Math.max(0, s.beans + Math.round(n));
     save(s);
@@ -247,8 +266,7 @@ export function themeState() {
 export function buyTheme(id) {
     const s = load();
     const th = THEMES.find((x) => x.id === id);
-    if (!th || s.themes.includes(id) || s.beans < th.price) return false;
-    s.beans -= th.price;
+    if (!th || s.themes.includes(id) || !pay(s, th.price)) return false;
     s.themes = [...s.themes, id];
     s.theme = id;
     save(s);
@@ -352,8 +370,7 @@ export function currentItem(kind) {
 export function buyItem(kind, id, price) {
     if (kind === 'theme') {
         const s = load();
-        if (s.themes.includes(id) || s.beans < price) return false;
-        s.beans -= price;
+        if (s.themes.includes(id) || !pay(s, price)) return false;
         s.themes = [...s.themes, id];
         s.theme = id;
         save(s);
@@ -362,8 +379,7 @@ export function buyItem(kind, id, price) {
     }
     const s = load();
     const list = s.items[kind] || [];
-    if (!CATALOG[kind].some((x) => x.id === id) || list.includes(id) || s.beans < price) return false;
-    s.beans -= price;
+    if (!CATALOG[kind].some((x) => x.id === id) || list.includes(id) || !pay(s, price)) return false;
     s.items = { ...s.items, [kind]: [...list, id] };
     s[kind] = id;
     save(s);
@@ -388,8 +404,7 @@ export function spares() {
 
 export function buySpare() {
     const s = load();
-    if (s.streak.freezes >= SPARE_MAX || s.beans < SPARE_PRICE) return false;
-    s.beans -= SPARE_PRICE;
+    if (s.streak.freezes >= SPARE_MAX || !pay(s, SPARE_PRICE)) return false;
     s.streak.freezes += 1;
     save(s);
     notify();

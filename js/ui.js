@@ -106,6 +106,12 @@ export function roundButton(scene, x, y, icon, onClick, { radius = 20, color = 0
         face.strokeCircle(radius * 0.42, -radius * 0.28, radius * 0.17);
         face.fillRect(-radius * 0.08, radius * 0.02, radius * 0.16, radius * 0.25);
         face.fillRoundedRect(-radius * 0.3, radius * 0.25, radius * 0.6, radius * 0.16, 2);
+    } else if (icon === 'chart') {
+        // three rising bars
+        const bw = radius * 0.24;
+        [[-1, 0.35], [0, 0.6], [1, 0.85]].forEach(([k, hgt]) => {
+            face.fillRoundedRect(k * bw * 1.35 - bw / 2, radius * 0.42 - radius * hgt, bw, radius * hgt, 2);
+        });
     } else if (icon === 'gear') {
         face.lineStyle(radius * 0.22, 0xffffff, 1);
         for (let i = 0; i < 8; i++) {
@@ -192,7 +198,7 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         if (m) m.close();
         const ROW = 52;
         const inMenu = scene.scene.key === 'MenuScene';
-        m = modal(scene, { depth, height: 100 + ROW * (inMenu ? 9 : 8) + 76, title: t('settings'), fade: first });
+        m = modal(scene, { depth, height: 100 + ROW * (inMenu ? 10 : 9) + 76, title: t('settings'), fade: first });
         const { panel } = m;
         let y = panel.y + 96;
         ['music', 'sfx', 'vibration'].forEach((key) => {
@@ -230,6 +236,13 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         y += ROW;
         // Gameplay options being tested
         toggleRow(scene, m, y, t('tests'), t('open'), true, () => openTests(scene, { depth: depth + 40 }));
+        y += ROW;
+        // Testing: unlimited beans, everything open
+        const god = !!settings.get('god');
+        toggleRow(scene, m, y, t('godMode'), god ? t('on') : t('off'), god, () => {
+            settings.set('god', !god);
+            render();
+        });
         // The tutorial used to live in the old MODES menu
         if (inMenu) {
             y += ROW;

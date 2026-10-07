@@ -7,8 +7,7 @@ import { ensurePreviews, ensureTextures, TEX_PX, POP_FX } from '../textures.js';
 import { backdropTexture, preloadBackdrop } from '../backdrops.js';
 import {
     beans, catalog, ownedItems, currentItem, buyItem, equipItem, dailyDeals,
-    spares, buySpare, SPARE_PRICE, SPARE_MAX
-} from '../progress.js';
+    spares, buySpare, SPARE_PRICE, SPARE_MAX, beansLabel } from '../progress.js';
 import { haptic } from '../settings.js';
 import { STICKERS, ownedStickers } from '../album.js';
 
@@ -124,7 +123,7 @@ export class ShopScene extends Phaser.Scene {
         this.cards.forEach((o) => o.destroy());
         this.cards = [];
         const add = (o) => { this.cards.push(o); return o; };
-        this.beansText.setText(`☕ ${beans()} ${t('beans')}`);
+        this.beansText.setText(`☕ ${beansLabel()} ${t('beans')}`);
 
         let y = listTop;
         if (this.tab === 'deals') {

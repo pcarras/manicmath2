@@ -9,6 +9,7 @@
 // `demo` drives the animated example shown before the round: pieces, which ones the hand taps.
 import { lang } from './i18n.js';
 import { todayKey } from './stats.js';
+import { settings } from './settings.js';
 
 export const DRILLS = [
     {
@@ -96,6 +97,7 @@ export function recordDrill(d, score) {
 
 // The first drill is open; each next one opens with 1 star on the previous
 export function isUnlocked(index) {
+    if (settings.get('god')) return true;
     return index === 0 || drillProgress(DRILLS[index - 1].id).stars >= 1 || drillProgress(DRILLS[index].id).stars >= 1;
 }
 

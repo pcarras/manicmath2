@@ -3,6 +3,7 @@
 // and opens with an animated example (a hand taps the right pieces) before the round starts.
 // Types (see drills.js): pair, one, filter, fractions.
 import { CONSTANTS, PIECE_BODY, COLORS } from '../constants.js';
+import { logDrill } from '../analysis.js';
 import { ensureTextures, bakeLabelPiece, bakePizzaPiece, pieceTextureKey, JUNK_SIDE, TEX_PX } from '../textures.js';
 import { INV, view, setupCamera } from '../display.js';
 import { createDrillBackground } from '../drillbg.js';
@@ -602,6 +603,7 @@ export class DrillScene extends Phaser.Scene {
 
     // Multiples / primes: the right ones pop, a wrong one turns to steel with an explanation
     tapFilter(p) {
+        this.lastTapped = p;
         const prime = this.drill.rule === 'prime';
         const ok = prime ? isPrime(p.value) : p.value % this.k === 0;
         if (ok) {
@@ -632,7 +634,19 @@ export class DrillScene extends Phaser.Scene {
 
     // ------------------------------------------------------------------ results of a move
 
+    // What was asked, for the learning analysis (analysis.js): "=24", "double:7", "×3", "9", "1/2"
+    drillItem() {
+        const d = this.drill;
+        if (d.type === 'pair') return `=${this.target}`;
+        if (d.type === 'one') return `${this.kind}:${this.n}`;
+        if (d.rule === 'multiple') return `×${this.k}`;
+        if (d.rule === 'prime') return this.lastTapped ? String(this.lastTapped.value) : '';
+        if (d.type === 'fractions') return fracLabel(this.target);
+        return '';
+    }
+
     success(list) {
+        logDrill(this.drill.id, true);
         const now = this.time.now;
         this.combo = now - this.lastOkAt < 5000 ? this.combo + 1 : 1;
         this.lastOkAt = now;
@@ -677,6 +691,7 @@ export class DrillScene extends Phaser.Scene {
     }
 
     fail(explain, keepPicks = false) {
+        logDrill(this.drill.id, false, this.drillItem());
         this.combo = 0;
         this.setScore(this.score - 30);
         haptic('fail');
