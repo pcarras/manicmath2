@@ -115,6 +115,13 @@ export class Room {
         return r.ok ? r.data.i : null;
     }
 
+    // End of the game, for the rankings: { win } in a duel, { score, total } in a team game.
+    // Resolves with { counted } or null when it could not be sent. Works after close() too.
+    async report(data) {
+        const r = await post({ action: 'result', code: this.code, id: player().id, ...data });
+        return r.ok ? r.data : null;
+    }
+
     close() {
         if (this.closed) return;
         this.closed = true;

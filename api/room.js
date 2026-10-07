@@ -7,14 +7,20 @@
 // POST /api/room { action: 'join', code, id, name }                   -> { code, seed, mode, me: 1, now }
 // POST /api/room { action: 'event', code, id, ev }                    -> { i, now }
 // POST /api/room { action: 'leave', code, id }                        -> { ok: true }
+// POST /api/room { action: 'result', code, id, win?, score?, total? } -> { counted }
+//      end of a game: duel (win: did I win) adds a victory to the winner's trophies; team (score: my
+//      points, total: both players') feeds my weekly score and the duo board. Each room counts once.
+//      -> { counted, won? }  (won: in a duel, whether the result that counted makes me the winner)
 // GET  /api/room?code=1234&id=<player>&since=<n>
 //      -> { mode, seed, players: [{ name, here }], startAt, now, events: [{ i, from, ...ev }] }
 import { checkName } from '../js/namefilter.js';
+import { NAMES, TEAM_NAMES, WEEK_TTL, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey } from './_boards.js';
 
 const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 const TTL = 60 * 60 * 2;          // rooms vanish after 2 hours
 const START_DELAY = 6000;         // ms between the second player joining and the start
+const MIN_PLAY_MS = 20000;        // a game shorter than this is not counted in the rankings
 const AWAY_MS = 12000;            // no poll for this long: the player left
 const EVENT_TYPES = ['solve', 'junk', 'over', 'score', 'leave', 'signal'];
 
@@ -200,6 +206,51 @@ export default async function handler(req, res) {
                 ['EXPIRE', evKey(b.code), String(TTL)]
             ]);
             res.status(200).json({ i: len - 1, now });
+            return;
+        }
+        if (b.action === 'result') {
+            const none = () => res.status(200).json({ counted: false });
+            if (!room.p0 || !room.p1 || !room.startAt || now - Number(room.startAt) < MIN_PLAY_MS) { none(); return; }
+            const [mineNew] = await redis([['HSETNX', roomKey(b.code), `res${me}`, '1']]);
+            if (mineNew !== 1) { none(); return; }
+            const ids = [room.p0, room.p1];
+            const nameOf = [room.n0, room.n1];
+            const names = [['HSET', NAMES, ids[0], nameOf[0], ids[1], nameOf[1]]];
+            if (room.mode === 'duel') {
+                // one result per room: whoever reports first decides (both phones normally agree)
+                const winner = ids[b.win === true ? me : 1 - me];
+                const [first] = await redis([['HSETNX', roomKey(b.code), 'duelwin', winner]]);
+                if (first !== 1) {
+                    // the other phone was first: just tell this one whether the result stands
+                    const [stored] = await redis([['HGET', roomKey(b.code), 'duelwin']]);
+                    res.status(200).json({ counted: true, won: stored === ids[me] });
+                    return;
+                }
+                const wk = duelWeekKey();
+                await redis([...names, ['ZINCRBY', wk, '1', winner], ['EXPIRE', wk, String(WEEK_TTL)], ['ZINCRBY', DUEL_ALL_KEY, '1', winner]]);
+                res.status(200).json({ counted: true, won: winner === ids[me] });
+                return;
+            }
+            const score = Number.isInteger(b.score) && b.score >= 0 && b.score <= 200000 ? b.score : null;
+            const total = Number.isInteger(b.total) && b.total >= (score || 0) && b.total <= 400000 ? b.total : null;
+            if (score === null || total === null) { res.status(400).json({ error: 'invalid' }); return; }
+            if (total === 0) { none(); return; }   // nobody scored: nothing to rank
+            const wk = weekKey();
+            // My share counts for my own weekly score, the pair's total for the duo board
+            await redis(score > 0
+                ? [...names, ['ZADD', wk, 'GT', String(score), ids[me]], ['EXPIRE', wk, String(WEEK_TTL)]]
+                : names);
+            const [firstTeam] = await redis([['HSETNX', roomKey(b.code), 'teamres', '1']]);
+            if (firstTeam === 1) {
+                const duo = [...ids].sort().join('-');
+                const tk = teamWeekKey();
+                await redis([
+                    ['ZADD', tk, 'GT', String(total), duo], ['EXPIRE', tk, String(WEEK_TTL)],
+                    ['HSET', TEAM_NAMES, duo, `${nameOf[ids.indexOf(duo.split('-')[0])]} & ${nameOf[ids.indexOf(duo.split('-')[1])]}`],
+                    ['HINCRBY', teamGamesKey(), duo, '1'], ['EXPIRE', teamGamesKey(), String(WEEK_TTL)]
+                ]);
+            }
+            res.status(200).json({ counted: true });
             return;
         }
         if (b.action === 'leave') {

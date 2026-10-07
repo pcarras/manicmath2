@@ -18,10 +18,11 @@ async function call(init, query = '') {
     }
 }
 
-// board: 'daily' (needs the date), 'classic' or 'week'
-export function fetchBoard(board, date) {
+// board: 'daily' (needs the date), 'classic', 'week', 'duel', 'duelAll' or 'team'.
+// last: the week that just ended (weekly prizes). Rows also come with `near`: me and my neighbours.
+export function fetchBoard(board, date, last = false) {
     const p = player();
-    return call({}, `?board=${board}&date=${date || ''}&id=${p.id}`);
+    return call({}, `?board=${board}&date=${date || ''}&id=${p.id}${last ? '&last=1' : ''}`);
 }
 
 // A refused name comes back as { ok: false, reason: 'name' }

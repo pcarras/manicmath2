@@ -21,13 +21,21 @@ function run([cmd, key, ...a]) {
     switch (cmd) {
         case 'HSETNX': { const h = db.get(key) || new Map(); if (h.has(a[0])) return 0; h.set(a[0], a[1]); db.set(key, h); return 1; }
         case 'HSET': { const h = db.get(key) || new Map(); for (let i = 0; i < a.length; i += 2) h.set(a[i], a[i + 1]); db.set(key, h); return a.length / 2; }
+        case 'HGET': { const h = db.get(key); return h && h.has(a[0]) ? h.get(a[0]) : null; }
         case 'HGETALL': { const h = db.get(key); return h ? [...h].flat() : []; }
         case 'HMGET': { const h = db.get(key) || new Map(); return a.map((f) => h.get(f) ?? null); }
         case 'EXPIRE': return 1;
         case 'RPUSH': { const l = db.get(key) || []; l.push(...a); db.set(key, l); return l.length; }
         case 'LRANGE': { const l = db.get(key) || []; const s = Number(a[0]); const e = Number(a[1]); return l.slice(s, e === -1 ? undefined : e + 1); }
         case 'ZADD': { const z = db.get(key) || new Map(); z.set(a[a.length - 1], Math.max(Number(a[a.length - 2]), z.get(a[a.length - 1]) || 0)); db.set(key, z); return 1; }
-        case 'ZRANGE': { const z = db.get(key) || new Map(); return [...z].sort((x, y) => y[1] - x[1]).slice(0, 50).flat().map(String); }
+        case 'ZRANGE': {
+            const z = db.get(key) || new Map();
+            const rows = [...z].sort((x, y) => y[1] - x[1]);
+            const st = Number(a[0]); const en = Number(a[1]);
+            return rows.slice(st, en < 0 ? undefined : en + 1).flat().map(String);
+        }
+        case 'ZINCRBY': { const z = db.get(key) || new Map(); z.set(a[1], (z.get(a[1]) || 0) + Number(a[0])); db.set(key, z); return String(z.get(a[1])); }
+        case 'HINCRBY': { const h = db.get(key) || new Map(); h.set(a[0], String(Number(h.get(a[0]) || 0) + Number(a[1]))); db.set(key, h); return Number(h.get(a[0])); }
         case 'ZREVRANK': { const z = db.get(key) || new Map(); const ids = [...z].sort((x, y) => y[1] - x[1]).map((x) => x[0]); const i = ids.indexOf(a[0]); return i < 0 ? null : i; }
         case 'ZSCORE': { const z = db.get(key) || new Map(); return z.has(a[0]) ? String(z.get(a[0])) : null; }
         default: throw new Error('unsupported ' + cmd);

@@ -72,6 +72,7 @@ export class GameScene extends Phaser.Scene {
         this.tutBica = null;
         this.leaveUI = null;
         this.mpText = null;
+        this.rankReport = null;
         this.routeText = null;
         this.sendAllKeys = false;
         this.keyTick = 0;
@@ -2117,6 +2118,10 @@ export class GameScene extends Phaser.Scene {
         if (this.team) outcome = 'team';
         else outcome = mine ? 'lost' : 'won';
         this.toastMissions(track('gameOver', { score: this.score, level: this.level, mode: this.mode }));
+        // The result goes to the rankings (duel victories, team duo board, my weekly score)
+        this.rankReport = this.room.report(this.team
+            ? { score: this.score, total: this.score + this.mate.score }
+            : { win: outcome === 'won' });
         this.gameOverCascade(() => this.showMultiPanel(outcome, reason, beans));
     }
 
@@ -2163,6 +2168,15 @@ export class GameScene extends Phaser.Scene {
             }).setOrigin(0.5));
         }
         if (outcome !== 'lost') this.celebrate();
+        // Tells the player when the game counted for the rankings
+        const rankNote = D(this.add.text(panel.cx, panel.y + panel.h - 136, '', {
+            fontFamily: 'Righteous', fontSize: '14px', color: '#c4b5fd', align: 'center', wordWrap: { width: panel.w - 30 }
+        }).setOrigin(0.5));
+        Promise.resolve(this.rankReport).then((r) => {
+            if (!r || !r.counted || !this.sys.isActive() || !rankNote.active) return;
+            if (outcome === 'team') rankNote.setText(`📊 ${t('rankTeamCounted')}`);
+            else if (r.won) rankNote.setText(`🏆 ${t('rankDuelWin')}`);
+        });
         const bw = Math.min(140, (panel.w - 60) / 2);
         m.add(chunkyButton(this, panel.cx - bw / 2 - 8, panel.y + panel.h - 54, t('twoPlayersShort'), 0xf59e0b,
             () => this.scene.start('MultiScene'), { width: bw, height: 50, fontSize: 18, depth, enter: false }));

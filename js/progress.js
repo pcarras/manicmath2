@@ -18,7 +18,8 @@ const DEFAULTS = {
     pop: 'glow',
     acc: 'none',
     player: null,                // { id, a, n, num } -> name built from word lists (no free text)
-    rewardsSeen: []              // streak milestones already paid
+    rewardsSeen: [],             // streak milestones already paid
+    weekly: { days: [], claimed: null, weeks: 0 }   // days played (last 3 weeks), last week paid, weeks with a participation prize
 };
 
 function load() {
@@ -243,6 +244,12 @@ export function track(event, data = {}) {
             done.push(m);
         }
     }
+    if (event === 'gameOver') {
+        const w = { ...DEFAULTS.weekly, ...(s.weekly || {}) };
+        const today = todayKey();
+        if (!w.days.includes(today)) w.days = [...w.days, today].slice(-21);
+        s.weekly = w;
+    }
     save(s);
     if (done.length) notify();
     return done;
@@ -438,5 +445,67 @@ export function dailyDeals() {
         const off = cuts[out.length];
         out.push({ kind, item, off, price: Math.round((item.price * (100 - off)) / 100 / 5) * 5 });
     }
+    return out;
+}
+
+// ------------------------------------------------------------------ weekly prizes
+
+// Monday (UTC) of the week a date belongs to
+export function mondayOf(dateKey) {
+    const d = new Date(`${dateKey}T00:00:00Z`);
+    return dayOffset(dateKey, -((d.getUTCDay() + 6) % 7));
+}
+
+export const WEEKLY_MIN_DAYS = 3;                 // days played in a week for the participation prize
+export const WEEKLY_BEANS = 60;
+export const TOP_BEANS = [300, 200, 100];         // 1st, 2nd, 3rd of the weekly ranking (they also get a frame)
+
+// Badge for each milestone of weeks with a participation prize
+export const BADGES = [
+    { weeks: 1, icon: '☕', pt: 'Cliente da semana', en: 'Weekly regular' },
+    { weeks: 4, icon: '🫖', pt: 'Habitué do café', en: 'Café regular' },
+    { weeks: 12, icon: '🌟', pt: 'Lenda da Bica', en: 'Bica legend' }
+];
+
+// The best badge for a number of weeks (null before the first one)
+export function badgeFor(weeks) {
+    let best = null;
+    for (const b of BADGES) if (weeks >= b.weeks) best = b;
+    return best;
+}
+
+// The week that just ended, when its prizes were not handed out yet: { week, days } or null
+export function weeklyDue() {
+    const w = { ...DEFAULTS.weekly, ...(load().weekly || {}) };
+    const week = dayOffset(mondayOf(todayKey()), -7);
+    if (w.claimed === week) return null;
+    const days = w.days.filter((d) => mondayOf(d) === week).length;
+    return { week, days };
+}
+
+export function weeklyBadge() {
+    return badgeFor((load().weekly || {}).weeks || 0);
+}
+
+// Pays last week's prizes. rank: place in last week's ranking (1 = first) or null. Returns what was won.
+export function claimWeekly(week, days, rank) {
+    const s = load();
+    const w = { ...DEFAULTS.weekly, ...(s.weekly || {}) };
+    if (w.claimed === week) return null;
+    const out = { beans: 0, participation: false, badge: null, newBadge: false, rank: rank && rank <= 3 ? rank : null };
+    if (days >= WEEKLY_MIN_DAYS) {
+        out.participation = true;
+        out.beans += WEEKLY_BEANS;
+        const before = badgeFor(w.weeks);
+        w.weeks += 1;
+        out.badge = badgeFor(w.weeks);
+        out.newBadge = out.badge !== before;
+    }
+    if (out.rank) out.beans += TOP_BEANS[out.rank - 1];
+    w.claimed = week;
+    s.weekly = w;
+    s.beans += out.beans;
+    save(s);
+    if (out.beans) notify();
     return out;
 }

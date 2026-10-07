@@ -1,14 +1,14 @@
 
 import { createStarfield } from '../starfield.js';
 import { installMode, install, onInstallChange, safeAreaTop } from '../pwa.js';
-import { t } from '../i18n.js';
+import { t, lang } from '../i18n.js';
 import { isDebug, toggleDebug, settings, haptic } from '../settings.js';
 import { stats, daily } from '../stats.js';
 import { chunkyButton, roundButton, openSettings, modal } from '../ui.js';
 import { view, setupCamera, PHONE } from '../display.js';
 import { preloadMascot, addMascot, bob, say } from '../mascot.js';
-import { beans, onProgressChange, streakInfo, missions, missionText, beansLabel } from '../progress.js';
-import { syncBests } from '../ranking.js';
+import { beans, onProgressChange, streakInfo, missions, missionText, beansLabel, weeklyDue, claimWeekly } from '../progress.js';
+import { syncBests, fetchBoard } from '../ranking.js';
 import { ensureTextures } from '../textures.js';
 import { createTitle, createPieceRain } from '../title.js';
 
@@ -28,6 +28,7 @@ export class MenuScene extends Phaser.Scene {
 
         createStarfield(this);
         syncBests();
+        this.checkWeekly();
         ensureTextures(this);
         const calm = settings.get('reduceMotion');
         if (!calm) createPieceRain(this, w, h);
@@ -217,6 +218,46 @@ export class MenuScene extends Phaser.Scene {
                 this.tweens.add({ targets: note, alpha: 0, delay: 600, duration: 300 });
             }
         });
+    }
+
+    // Prizes of the week that just ended: beans and a badge for playing 3 days, beans (and a frame
+    // in the ranking, given by the server) for the top 3. Asked once per session, shown once per week.
+    async checkWeekly() {
+        const due = weeklyDue();
+        if (!due || this.registry.get('weeklyChecked')) return;
+        this.registry.set('weeklyChecked', true);
+        let rank = null;
+        if (due.days > 0) {
+            const r = await fetchBoard('week', undefined, true);
+            if (!r.ok) { this.registry.set('weeklyChecked', false); return; }   // offline: try again next time
+            rank = r.data.me ? r.data.me.rank : null;
+        }
+        const won = claimWeekly(due.week, due.days, rank);
+        if (!won || !this.sys.isActive() || (!won.participation && !won.rank)) return;
+        this.showWeekly(won, due.days);
+    }
+
+    showWeekly(won, days) {
+        const m = modal(this, { depth: 700, height: 320, title: t('weeklyTitle') });
+        const { panel } = m;
+        const d = m.depth;
+        let y = panel.y + 96;
+        const line = (text, color, size = 17) => {
+            const o = m.add(this.add.text(panel.cx, y, text, {
+                fontFamily: 'Righteous', fontSize: `${size}px`, color, align: 'center', wordWrap: { width: panel.w - 40 }
+            }).setOrigin(0.5, 0).setDepth(d));
+            y += o.height + 14;
+        };
+        if (won.participation) {
+            line(t('weeklyPlayed', { n: days }), '#c4c6f5', 15);
+            const name = won.badge[lang() === 'pt' ? 'pt' : 'en'];
+            line(`${won.badge.icon}  ${t(won.newBadge ? 'weeklyBadgeNew' : 'weeklyBadge', { name })}`, '#ffd23f', 20);
+        }
+        if (won.rank) line(`${['🥇', '🥈', '🥉'][won.rank - 1]}  ${t('weeklyTop', { n: won.rank })}`, '#4ade80', 16);
+        if (won.beans) line(t('weeklyBeans', { n: won.beans }), '#e8b878', 20);
+        m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 44, 'OK', 0x22c55e, () => m.close(),
+            { width: 140, height: 46, fontSize: 22, depth: d, enter: false }));
+        haptic('success');
     }
 
     // Today's missions + the streak calendar (last 7 days)

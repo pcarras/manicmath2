@@ -2,13 +2,18 @@
 // Vercel sets KV_REST_API_URL / KV_REST_API_TOKEN when the Upstash database is connected.
 //
 // Boards: daily (one per UTC day, kept 8 days), classic (best ever, one row per player) and week
-// (classic scores of the current UTC week, Monday to Sunday; filled by every classic POST).
-// sprint is kept only for older clients.
-// GET  /api/leaderboard?board=daily|classic|week&date=YYYY-MM-DD&id=<player>
-//      -> { board, date, top: [{ name, score, me }], me: { rank, score } | null }
+// (best single game of the current UTC week, Monday to Sunday; filled by classic games and by each
+// player's share of a TEAM game). sprint is kept only for older clients.
+// Two-player boards are read-only here, they are written by api/room.js when a game ends:
+// duel (victories this week), duelAll (victories ever) and team (best duos of the week).
+// GET  /api/leaderboard?board=daily|classic|week|duel|duelAll|team&date=YYYY-MM-DD&id=<player>[&last=1]
+//      -> { board, date, top: [{ name, score, me }], me: { rank, score } | null,
+//           near: [{ rank, name, score, me }] | null }   near = the player and 3 rows above and below
+//      last=1 (week only): the week that just ended, used to hand out the weekly prizes
 // POST /api/leaderboard { board, date, id, name, score }  (name checked by js/namefilter.js)
 //      -> same shape after saving; 422 { error: 'name', reason } when the name is refused
 import { checkName } from '../js/namefilter.js';
+import { NAMES, TEAM_NAMES, WEEK_TTL, weekStart, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey } from './_boards.js';
 
 const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -20,7 +25,7 @@ const ADJS = ['Veloz', 'Turbo', 'Genial', 'Ninja', 'Feroz', 'Audaz', 'Sagaz', 'I
 // Far above what a real game reaches; filters obvious fakes
 const MAX_SCORE = { daily: 200000, sprint: 150000, classic: 3000000, week: 3000000 };
 const TOP = 50;
-const NAMES = 'lbname';   // player id -> name, shared by every board
+const NEAR = 3;   // rows shown above and below the player
 
 function today(offset = 0) {
     const d = new Date();
@@ -38,40 +43,68 @@ async function redis(commands) {
     return (await r.json()).map((x) => x.result);
 }
 
-// Monday (UTC) of the current week, e.g. 2026-10-05
-function weekStart() {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-    return d.toISOString().slice(0, 10);
+const boardKey = (board, date, last) => {
+    if (board === 'daily') return `lb:${date}`;
+    if (board === 'week') return weekKey(last ? 1 : 0);
+    if (board === 'duel') return duelWeekKey();
+    if (board === 'duelAll') return DUEL_ALL_KEY;
+    if (board === 'team') return teamWeekKey();
+    return `lb:${board}`;
+};
+
+function pairs(flat) {
+    const out = [];
+    for (let i = 0; flat && i < flat.length; i += 2) out.push({ id: flat[i], score: Number(flat[i + 1]) });
+    return out;
 }
 
-const boardKey = (board, date) => (board === 'daily' ? `lb:${date}` : board === 'week' ? `lb:week:${weekStart()}` : `lb:${board}`);
-
-async function read(board, date, id) {
-    const key = boardKey(board, date);
+async function read(board, date, id, last) {
+    const key = boardKey(board, date, last);
+    const team = board === 'team';   // rows are duos ("idA-idB"), so a single player has no rank of their own
     const cmds = [['ZRANGE', key, '0', String(TOP - 1), 'REV', 'WITHSCORES']];
-    if (id) cmds.push(['ZREVRANK', key, id], ['ZSCORE', key, id]);
+    if (id && !team) cmds.push(['ZREVRANK', key, id], ['ZSCORE', key, id]);
     const [flat, rank, score] = await redis(cmds);
-    const ids = [];
-    const scores = [];
-    for (let i = 0; i < flat.length; i += 2) {
-        ids.push(flat[i]);
-        scores.push(Number(flat[i + 1]));
+    const top = pairs(flat);
+    let near = null;
+    if (rank !== null && rank !== undefined) {
+        const from = Math.max(0, rank - NEAR);
+        const [nf] = await redis([['ZRANGE', key, String(from), String(rank + NEAR), 'REV', 'WITHSCORES']]);
+        near = pairs(nf).map((r, i) => ({ ...r, rank: from + i + 1 }));
     }
-    let names = [];
+    const ids = [...new Set([...top, ...(near || [])].map((r) => r.id))];
+    let names = {};
+    let games = {};
+    const frames = {};
     if (ids.length) {
-        const res = await redis([['HMGET', NAMES, ...ids], ...(board === 'daily' ? [['HMGET', `lbn:${date}`, ...ids]] : [])]);
-        names = ids.map((_, i) => res[0][i] || (res[1] && res[1][i]) || '?');
+        const cmds2 = [['HMGET', team ? TEAM_NAMES : NAMES, ...ids]];
+        if (board === 'daily') cmds2.push(['HMGET', `lbn:${date}`, ...ids]);
+        if (team) cmds2.push(['HMGET', teamGamesKey(), ...ids]);
+        // Last week's top 3 wear a frame this week
+        const frameAt = cmds2.length;
+        if (!team) cmds2.push(['ZRANGE', weekKey(1), '0', '2', 'REV']);
+        const res = await redis(cmds2);
+        if (!team) (res[frameAt] || []).forEach((pid, i) => { frames[pid] = i + 1; });
+        ids.forEach((pid, i) => {
+            names[pid] = res[0][i] || (board === 'daily' && res[1] && res[1][i]) || '?';
+            if (team) games[pid] = Number(res[1][i]) || 1;
+        });
     }
+    const mine = (pid) => (team ? !!id && pid.split('-').includes(id) : pid === id);
+    const row = (r) => ({
+        name: names[r.id], score: r.score, me: mine(r.id),
+        ...(team ? { games: games[r.id] } : frames[r.id] ? { frame: frames[r.id] } : {})
+    });
     return {
         board,
-        date: board === 'week' ? weekStart() : date,
-        top: ids.map((pid, i) => ({ name: names[i], score: scores[i], me: pid === id })),
-        me: id && rank !== null && rank !== undefined ? { rank: rank + 1, score: Number(score) } : null
+        date: board === 'week' ? weekStart(last ? 1 : 0) : board === 'daily' ? date : weekStart(),
+        top: top.map(row),
+        me: id && rank !== null && rank !== undefined ? { rank: rank + 1, score: Number(score) } : null,
+        near: near ? near.map((r) => ({ rank: r.rank, ...row(r) })) : null
     };
 }
 
-const validBoard = (b) => b === 'daily' || b === 'classic' || b === 'week' || b === 'sprint';
+const validBoard = (b) => ['daily', 'classic', 'week', 'sprint', 'duel', 'duelAll', 'team'].includes(b);
+const writable = (b) => b === 'daily' || b === 'classic' || b === 'sprint';   // the others are filled by api/room.js
 const validDate = (d) => d === today() || d === today(-1);
 const validId = (id) => typeof id === 'string' && /^[a-z0-9]{16}$/.test(id);
 const idx = (v, list) => Number.isInteger(v) && v >= 0 && v < list.length;
@@ -87,12 +120,12 @@ export default async function handler(req, res) {
             const board = validBoard(req.query.board) ? req.query.board : 'daily';
             const date = validDate(req.query.date) ? req.query.date : today();
             const id = validId(req.query.id) ? req.query.id : null;
-            res.status(200).json(await read(board, date, id));
+            res.status(200).json(await read(board, date, id, req.query.last === '1'));
             return;
         }
         if (req.method === 'POST') {
             const b = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-            const board = validBoard(b.board) && b.board !== 'week' ? b.board : 'daily';
+            const board = writable(b.board) ? b.board : 'daily';
             const date = board === 'daily' ? b.date : today();
             const { id, score } = b;
             if ((board === 'daily' && !validDate(date)) || !validId(id)
@@ -121,8 +154,8 @@ export default async function handler(req, res) {
             ];
             if (board === 'daily') cmds.push(['EXPIRE', key, String(60 * 60 * 24 * 8)]);
             if (board === 'classic' && !b.sync) {
-                const wk = boardKey('week');
-                cmds.push(['ZADD', wk, 'GT', String(score), id], ['EXPIRE', wk, String(60 * 60 * 24 * 15)]);
+                const wk = weekKey();
+                cmds.push(['ZADD', wk, 'GT', String(score), id], ['EXPIRE', wk, String(WEEK_TTL)]);
             }
             await redis(cmds);
             res.status(200).json(await read(board, date, id));
