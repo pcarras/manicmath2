@@ -69,5 +69,7 @@ export const SCORING = {
     failPenalty: 50,
     comboWindow: 6000,    // ms between correct equations to keep the combo
     comboStep: 0.5,       // x1, x1.5, x2 ...
-    comboMax: 4
+    comboMax: 4,
+    quickWindow: 4000,    // ms: a correct equation this soon after the last one earns a coffee bean
+    doubleAfter: 3        // this many quick ones in a row: beans count double (a "double espresso")
 };

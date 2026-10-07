@@ -106,12 +106,15 @@ export class Sfx {
     // Tape slowing to a stop (slow-motion into a bonus round), or speeding back up (reverse)
     tape(down, dur = 1.5) {
         if (!this.on()) return;
-        const [a, b] = down ? [1, 0.12] : [0.12, 1];
-        [[196, 'sawtooth', 0.05], [294, 'triangle', 0.07], [392, 'triangle', 0.04]].forEach(([f, type, vol]) => {
+        const [a, b] = down ? [1, 0.1] : [0.1, 1];
+        [[196, 'sawtooth', 0.13], [294, 'triangle', 0.18], [392, 'square', 0.05], [98, 'triangle', 0.16]].forEach(([f, type, vol]) => {
             this.tone(f * a, { dur, type, vol, attack: down ? 0.01 : dur * 0.6, to: f * b });
         });
-        this.noiseBurst({ dur, vol: 0.05, type: 'lowpass', freq: down ? 2400 : 300, to: down ? 300 : 2400 });
-        if (down) this.tone(70, { at: dur * 0.85, dur: 0.35, type: 'sine', vol: 0.22, to: 40 });
+        // A slow wobble on top, like a tape motor losing (or finding) its speed
+        [0.2, 0.45, 0.7].forEach((x) => this.tone(330 * (down ? 1 - x * 0.8 : 0.2 + x * 0.8), { at: x * dur, dur: 0.25, type: 'triangle', vol: 0.08, to: 330 * (down ? 0.9 - x * 0.8 : 0.3 + x * 0.8) }));
+        this.noiseBurst({ dur, vol: 0.12, type: 'lowpass', freq: down ? 2400 : 300, to: down ? 300 : 2400 });
+        if (down) this.tone(70, { at: dur * 0.9, dur: 0.45, type: 'sine', vol: 0.4, to: 38 });
+        else this.tone(523, { at: dur * 0.95, dur: 0.3, type: 'triangle', vol: 0.14, to: 1046 });
     }
 
     // Game-over score counter: short ticks whose pitch follows the progress (0..1)

@@ -64,6 +64,7 @@ export class GameScene extends Phaser.Scene {
         this.combo = 0;
         this.bestCombo = 0;
         this.lastSuccessAt = -Infinity;
+        this.quick = 0;
         this.streak = 0;
         this.toastQueue = [];
         this.toasting = false;
@@ -1017,6 +1018,7 @@ export class GameScene extends Phaser.Scene {
         this.shake(220, 0.012);
         this.flash(140, 200, 50, 50);
         this.combo = 0;
+        this.quick = 0;
         this.streak = 0;
         this.addScore(-SCORING.failPenalty, this.targetX, this.eqY + this.slotSize * 0.6, 0xef4444);
         if (!this.tutorial && settings.get('teachErrors')) this.explainMistake();
@@ -1659,7 +1661,7 @@ export class GameScene extends Phaser.Scene {
         for (let i = 0; i < 3; i++) this.deselect(i);
         this.sfx.stopTickTock();
         this.music.hold(true);   // the mini game brings its own music
-        this.sfx.tape(true, 1.6);
+        this.sfx.tape(true, 2.6);
         this.slowMo('in', () => {
             this.sfx.pauseLoops();
             const d = Phaser.Utils.Array.GetRandom(DRILLS);
@@ -1671,7 +1673,7 @@ export class GameScene extends Phaser.Scene {
     // Called by DrillScene when the bonus round ends
     bonusDone(points) {
         this.scene.resume();
-        this.sfx.tape(false, 1.4);
+        this.sfx.tape(false, 2.2);
         this.slowMo('out', () => {
             this.inBonus = false;
             this.sfx.resumeLoops();
@@ -1711,7 +1713,7 @@ export class GameScene extends Phaser.Scene {
             const fx = cam.postFX ? cam.postFX.addColorMatrix() : null;
             r = this.replay = { box, wash, top, bottom, rec, speed, title, barH, fx, k: 0 };
         }
-        Object.assign(r, { dir, t: 0, dur: dir === 'in' ? 1600 : 1400, hold: dir === 'in' ? 500 : 0, done });
+        Object.assign(r, { dir, t: 0, dur: dir === 'in' ? 2600 : 2200, hold: dir === 'in' ? 800 : 0, done });
         r.title.setText(dir === 'in' ? t('slowMo') : t('backToGame'));
     }
 
@@ -2066,6 +2068,7 @@ export class GameScene extends Phaser.Scene {
     scoreSuccess() {
         const now = this.time.now;
         this.combo = now - this.lastSuccessAt <= SCORING.comboWindow ? this.combo + 1 : 1;
+        this.quick = now - this.lastSuccessAt <= SCORING.quickWindow ? this.quick + 1 : 0;
         this.lastSuccessAt = now;
         this.bestCombo = Math.max(this.bestCombo, this.combo);
         this.solved++;
@@ -2085,8 +2088,16 @@ export class GameScene extends Phaser.Scene {
 
         this.streak++;
         this.solvedOps.push(op);
-        // A bean per equation, one more on a hot combo
-        if (!this.tutorial) this.earnBeans(this.combo >= 3 ? 2 : 1, this.w * 0.3, this.uiHeight + 28);
+        // A bean per equation, one more on a hot combo, one more for a quick answer,
+        // and everything doubles on a run of quick answers
+        if (!this.tutorial) {
+            let beans = this.combo >= 3 ? 2 : 1;
+            if (this.quick >= 1) beans += 1;
+            const double = this.quick >= SCORING.doubleAfter;
+            if (double) beans *= 2;
+            if (this.quick >= 1) this.showCoffee(double);
+            this.earnBeans(beans, this.w * 0.3, this.uiHeight + 28);
+        }
         if (!this.tutorial) {
             this.toastAchievements(report('solve', {
                 op, combo: this.combo, level: this.level, score: this.score, iced, streak: this.streak
@@ -2111,6 +2122,25 @@ export class GameScene extends Phaser.Scene {
         this.starBurst.emitParticleAt(this.w / 2, y, 6 + this.combo * 2);
         if (settings.get('sfx') && this.cache.audio.exists('bonusSound')) {
             this.sound.play('bonusSound', { volume: 0.45, detune: Math.min(6, this.combo - 2) * 150 });
+        }
+    }
+
+    // Coffee bonus for quick answers: one cup, or two cups ("double espresso") on a quick run
+    showCoffee(double) {
+        const y = this.uiHeight + (this.combo >= 2 ? 118 : 70);
+        const label = this.add.text(this.w / 2, y, double ? t('doubleShot') : t('quickHit'), {
+            fontFamily: 'Righteous', fontSize: double ? '30px' : '22px', color: double ? '#ffd23f' : '#ffd9a8',
+            stroke: '#2b160b', strokeThickness: 7,
+            shadow: double ? { offsetX: 0, offsetY: 0, color: '#ff8a00', blur: 14, fill: true } : undefined
+        }).setOrigin(0.5).setDepth(211).setScale(0.3);
+        this.tweens.add({ targets: label, scale: 1, angle: { from: -8, to: 0 }, duration: 300, ease: 'Back.easeOut' });
+        this.tweens.add({ targets: label, alpha: 0, y: y - 30, delay: double ? 900 : 650, duration: 350, onComplete: () => label.destroy() });
+        if (double) {
+            this.sfx.fanfare();
+            haptic('combo');
+            if (this.starBurst) this.starBurst.emitParticleAt(this.w / 2, y, 14);
+        } else {
+            this.sfx.coin(4);
         }
     }
 
