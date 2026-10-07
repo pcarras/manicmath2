@@ -170,6 +170,7 @@ const STR = {
         taste: 'PROVAR',
         // Bica Games overlays
         tapToSkip: 'TOCA PARA SALTAR',
+        tapToStart: 'TOCA PARA COMEÇAR',
         tagline: '☕ EXPRESSO GAMES · PORTUGAL',
         newVersion: 'NOVA VERSÃO!',
         double: 'DUPLO',
@@ -350,6 +351,7 @@ const STR = {
         newFlavourSub: 'A fresh version just came out',
         taste: 'TASTE IT',
         tapToSkip: 'TAP TO SKIP',
+        tapToStart: 'TAP TO START',
         tagline: '☕ ESPRESSO GAMES · PORTUGAL',
         newVersion: 'NEW VERSION!',
         double: 'DOUBLE',

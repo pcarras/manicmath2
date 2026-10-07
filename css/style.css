@@ -228,6 +228,18 @@ canvas {
     animation: bica-blink 1s steps(2) infinite;
 }
 
+.bica__skip--start {
+    bottom: 30%;
+    font-size: 13px;
+    color: #ffd23f;
+    text-shadow: 0 0 8px rgba(255, 210, 63, 0.6);
+    animation: bica-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes bica-pulse {
+    50% { opacity: 0.35; transform: scale(0.94); }
+}
+
 @keyframes bica-blink {
     50% { opacity: 0; }
 }

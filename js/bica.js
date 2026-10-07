@@ -249,7 +249,9 @@ function drawScene(ctx, s) {
     for (let r = 1; r <= 4; r++) px(30 + Math.round(Math.cos(a) * r), 35 + Math.round(Math.sin(a) * r), 1, 1, C.red);
     px(30, 35, 1, 1, OUT);
     const brewing = (s.pressure || 0) > 0.5;
-    px(43, 34, 2, 2, brewing ? (Math.sin(t * 14) > 0 ? '#ff5e5b' : '#7a1d1d') : '#3ddc84');
+    const power = s.power === undefined ? 1 : s.power;
+    const ledOn = power >= 1 || Math.random() < power * 0.7;   // flickers while the machine powers up
+    px(43, 34, 2, 2, !ledOn ? '#16301f' : brewing ? (Math.sin(t * 14) > 0 ? '#ff5e5b' : '#7a1d1d') : '#3ddc84');
 
     // Spouts
     const streams = s.spouts === 2 ? [43, 51] : [47];
@@ -274,7 +276,20 @@ function drawScene(ctx, s) {
         }
     }
 
-    // Cup on its saucer (slides in from the right)
+    // Last drops after the pour
+    const drips = s.drips || 0;
+    if (drips > 0 && drips < 1) {
+        for (const sx of streams) {
+            for (let k = 0; k < 3; k++) {
+                const ph = drips * 3 - k;
+                if (ph > 0 && ph < 1) px(sx, 55 + Math.round(ph * (rim - 55)), 2, 2, C.coffee);
+            }
+        }
+    }
+
+    // Cup on its saucer (slides in from the right, bounces when it lands)
+    ctx.save();
+    ctx.translate(0, Math.round(s.cupY || 0));
     const dx = Math.round(s.cupX || 0);
     const fill = clamp(s.fill || 0);
     px(34 + dx, 80, 28, 1, OUT);
@@ -325,6 +340,8 @@ function drawScene(ctx, s) {
         });
         ctx.globalAlpha = 1;
     }
+
+    ctx.restore();
 
     // Steam wand puff
     const puff = clamp(s.puff || 0);
@@ -394,6 +411,143 @@ function blip(freq, dur = 0.08, type = 'square', vol = 0.04, when = 0) {
     o.start(t0);
     o.stop(t0 + dur + 0.02);
 }
+
+// ------------------------------------------------------------------ café sounds (synthesized)
+
+let noiseBuf = null;
+
+function noiseSrc(a) {
+    if (!noiseBuf) {
+        noiseBuf = a.createBuffer(1, a.sampleRate, a.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const src = a.createBufferSource();
+    src.buffer = noiseBuf;
+    src.loop = true;
+    return src;
+}
+
+function env(a, g, t0, attack, hold, release, peak) {
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(peak, t0 + attack);
+    g.gain.setValueAtTime(peak, t0 + attack + hold);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + attack + hold + release);
+}
+
+function ring(a, freqs, t0, decay, vol) {
+    freqs.forEach((f, i) => {
+        const o = a.createOscillator();
+        const g = a.createGain();
+        o.frequency.value = f;
+        g.gain.setValueAtTime(vol / (1 + i * 0.6), t0);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + decay / (1 + i * 0.35));
+        o.connect(g).connect(a.destination);
+        o.start(t0);
+        o.stop(t0 + decay + 0.05);
+    });
+}
+
+const cafe = {
+    on() {
+        return settings.get('sfx') ? audio() : null;
+    },
+    // Vibration pump: a 50 Hz buzz with a rattle, as on a real espresso machine
+    pump(dur, when = 0) {
+        const a = this.on();
+        if (!a) return;
+        const t0 = a.currentTime + when;
+        const o = a.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(48, t0);
+        o.frequency.linearRampToValueAtTime(53, t0 + dur);
+        const f = a.createBiquadFilter();
+        f.type = 'lowpass';
+        f.frequency.value = 420;
+        f.Q.value = 4;
+        const g = a.createGain();
+        env(a, g, t0, 0.2, dur - 0.6, 0.4, 0.13);
+        const rattle = a.createOscillator();
+        const rg = a.createGain();
+        rattle.frequency.value = 25;
+        rg.gain.value = 0.05;
+        rattle.connect(rg).connect(g.gain);
+        o.connect(f).connect(g).connect(a.destination);
+        [o, rattle].forEach((n) => { n.start(t0); n.stop(t0 + dur + 0.1); });
+    },
+    // Coffee pouring: bubbly band-passed noise with little "bloops"
+    pour(dur, when = 0) {
+        const a = this.on();
+        if (!a) return;
+        const t0 = a.currentTime + when;
+        const src = noiseSrc(a);
+        const f = a.createBiquadFilter();
+        f.type = 'bandpass';
+        f.frequency.value = 1100;
+        f.Q.value = 3;
+        const g = a.createGain();
+        g.gain.setValueAtTime(0.0001, t0);
+        for (let x = 0; x < dur; x += 0.045) {
+            g.gain.setValueAtTime(0.03 + Math.random() * 0.07 * (x < dur - 0.6 ? 1 : (dur - x) / 0.6), t0 + x);
+        }
+        g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+        src.connect(f).connect(g).connect(a.destination);
+        src.start(t0, Math.random() * 0.5);
+        src.stop(t0 + dur + 0.05);
+        for (let x = 0.2; x < dur - 0.3; x += 0.08 + Math.random() * 0.22) {
+            const o = a.createOscillator();
+            const bg = a.createGain();
+            const fr = 280 + Math.random() * 380;
+            o.frequency.setValueAtTime(fr, t0 + x);
+            o.frequency.exponentialRampToValueAtTime(fr * 1.9, t0 + x + 0.05);
+            bg.gain.setValueAtTime(0.0001, t0 + x);
+            bg.gain.exponentialRampToValueAtTime(0.05, t0 + x + 0.008);
+            bg.gain.exponentialRampToValueAtTime(0.0001, t0 + x + 0.06);
+            o.connect(bg).connect(a.destination);
+            o.start(t0 + x);
+            o.stop(t0 + x + 0.08);
+        }
+    },
+    // Steam wand
+    hiss(dur, when = 0) {
+        const a = this.on();
+        if (!a) return;
+        const t0 = a.currentTime + when;
+        const src = noiseSrc(a);
+        const f = a.createBiquadFilter();
+        f.type = 'highpass';
+        f.frequency.value = 3200;
+        const g = a.createGain();
+        env(a, g, t0, 0.05, dur * 0.5, dur * 0.5, 0.07);
+        src.connect(f).connect(g).connect(a.destination);
+        src.start(t0);
+        src.stop(t0 + dur + 0.1);
+    },
+    // Ceramic cup set down on its saucer: a bright clink and a smaller bounce
+    clink(when = 0) {
+        const a = this.on();
+        if (!a) return;
+        const t0 = a.currentTime + when;
+        ring(a, [2093, 3322, 4710, 6800], t0, 0.45, 0.07);
+        ring(a, [2093, 3322, 4710], t0 + 0.085, 0.25, 0.03);
+        const src = noiseSrc(a);
+        const f = a.createBiquadFilter();
+        f.type = 'bandpass';
+        f.frequency.value = 5000;
+        const g = a.createGain();
+        env(a, g, t0, 0.001, 0.003, 0.02, 0.12);
+        src.connect(f).connect(g).connect(a.destination);
+        src.start(t0);
+        src.stop(t0 + 0.05);
+    },
+    // Teaspoon tapping the cup three times
+    tinkle(when = 0) {
+        const a = this.on();
+        if (!a) return;
+        const t0 = a.currentTime + when;
+        [0, 0.13, 0.24].forEach((d, i) => ring(a, [3136, 5020, 7350], t0 + d, 0.5, 0.045 - i * 0.008));
+    }
+};
 
 // Tiny synthesized click for UI buttons (no audio asset needed in the menu)
 export function uiClick() {
@@ -491,11 +645,16 @@ export function playIntro() {
         const o = buildOverlay({ title: 'BICA', skip: t('tapToSkip') });
         const letters = [...o.title.children];
         let done = false;
+        let started = false;
+        let startedAt = 0;
         let letterIdx = 0;
-        let neonOn = false;
-        let shined = false;
-        let tagShown = false;
-        let dinged = false;
+        const fired = new Set();
+        const once = (key, ms, at, fn) => {
+            if (ms >= at && !fired.has(key)) {
+                fired.add(key);
+                fn();
+            }
+        };
 
         let closedResolve;
         const closed = new Promise((r) => { closedResolve = r; });
@@ -509,59 +668,81 @@ export function playIntro() {
             });
         };
         currentIntro = { finish, closed };
-        o.root.addEventListener('pointerdown', finish);
-        // Safety net: if animation frames are throttled (hidden tab), never block the game
-        setTimeout(finish, 6000);
 
-        const start = performance.now();
+        // Phones only allow sound after a tap: if audio is still locked, ask for one first
+        // (that same tap unlocks the sound for the whole game)
+        const begin = () => {
+            if (started) return;
+            started = true;
+            audio();
+            o.skip.textContent = t('tapToSkip');
+            o.skip.classList.remove('bica__skip--start');
+            startedAt = performance.now();
+            requestAnimationFrame(frame);
+            // Safety net: if animation frames are throttled (hidden tab), never block the game
+            setTimeout(finish, 15000);
+        };
+        o.root.addEventListener('pointerdown', () => {
+            if (!started) begin();
+            else if (performance.now() - startedAt > 1200) finish();
+        });
+
         const frame = (now) => {
             if (done) return;
-            const ms = now - start;
+            const ms = now - startedAt;
 
-            while (letterIdx < letters.length && ms > 1100 + letterIdx * 150) {
+            // Sound cues
+            once('pump', ms, 700, () => cafe.pump(4.7));
+            once('clink', ms, 1950, () => cafe.clink());
+            once('pour', ms, 2350, () => cafe.pour(2.9));
+            once('hiss', ms, 5300, () => cafe.hiss(0.9));
+
+            while (letterIdx < letters.length && ms > 5900 + letterIdx * 170) {
                 letters[letterIdx].classList.add('in');
                 blip(220 + letterIdx * 110);
                 letterIdx++;
             }
-            if (!neonOn && ms > 2000) {
-                neonOn = true;
+            once('neon', ms, 6700, () => {
                 o.sub.textContent = 'GAMES';
                 o.sub.classList.add('neon');
                 blip(110, 0.05, 'sawtooth', 0.03);
                 blip(110, 0.05, 'sawtooth', 0.03, 0.18);
-            }
-            if (!dinged && ms > 2350) {
-                dinged = true;
-                jingle();
-            }
-            if (!shined && ms > 2500) {
-                shined = true;
-                o.title.classList.add('shine');
-            }
-            if (!tagShown && ms > 2900) {
-                tagShown = true;
-                o.tag.textContent = t('tagline');
-            }
+            });
+            once('tinkle', ms, 6950, () => cafe.tinkle());
+            once('jingle', ms, 7250, () => jingle());
+            once('shine', ms, 7300, () => o.title.classList.add('shine'));
+            once('tag', ms, 7600, () => { o.tag.textContent = t('tagline'); });
 
+            const land = clamp((ms - 1300) / 650);
             drawScene(o.ctx, {
                 t: ms / 1000,
                 spouts: 1,
-                cupX: 46 * (1 - easeOutBack(clamp((ms - 300) / 600))),
-                pressure: ms < 2400 ? clamp((ms - 800) / 600) : 1 - 0.85 * clamp((ms - 2400) / 500),
-                streamBottom: clamp((ms - 1000) / 220),
-                streamTop: clamp((ms - 2300) / 220),
-                fill: clamp((ms - 1050) / 1250),
-                steam: clamp((ms - 2350) / 500),
-                puff: clamp((ms - 2500) / 250) * (1 - clamp((ms - 3300) / 500)),
-                glint: (ms - 2400) / 500,
-                sparkle: ms > 2900 && ms < 3600 ? (ms - 2900) / 700 : 0,
-                shootingStar: (ms - 1300) / 450
+                power: clamp((ms - 250) / 900),
+                cupX: 46 * (1 - easeOutBack(land)),
+                cupY: ms > 1900 && ms < 2150 ? -Math.sin(((ms - 1900) / 250) * Math.PI) * 2 : 0,
+                pressure: ms < 5000 ? clamp((ms - 700) / 800) : 1 - 0.85 * clamp((ms - 5000) / 600),
+                streamBottom: clamp((ms - 2300) / 300),
+                streamTop: clamp((ms - 5000) / 300),
+                fill: clamp((ms - 2400) / 2600),
+                drips: clamp((ms - 5250) / 900),
+                steam: clamp((ms - 5400) / 700),
+                puff: clamp((ms - 5300) / 300) * (1 - clamp((ms - 6300) / 600)),
+                glint: (ms - 7100) / 600,
+                sparkle: ms > 7600 && ms < 8300 ? (ms - 7600) / 700 : 0,
+                shootingStar: (ms - 3400) / 500
             });
 
-            if (ms > 4500) finish();
+            if (ms > 9200) finish();
             else requestAnimationFrame(frame);
         };
-        requestAnimationFrame(frame);
+
+        // First frame: the scene in the dark, machine off
+        drawScene(o.ctx, { t: 0, spouts: 1, power: 0, cupX: 46, pressure: 0 });
+        if (audio()) begin();
+        else {
+            o.skip.textContent = t('tapToStart');
+            o.skip.classList.add('bica__skip--start');
+        }
     }));
 }
 
@@ -583,6 +764,11 @@ export function playDoubleEspresso({ ready, from, to }) {
         let letterIdx = 0;
         let last = performance.now();
         const start = last;
+
+        // Sounds: cup lands, pump and pour while brewing, steam and spoon when done
+        cafe.clink(0.62);
+        cafe.pump(3.1, 0.45);
+        cafe.pour(2.4, 0.75);
 
         const frame = (now) => {
             const ms = now - start;
@@ -606,6 +792,8 @@ export function playDoubleEspresso({ ready, from, to }) {
                 o.header.textContent = t('updated');
                 o.tag.textContent = t('ready');
                 o.title.classList.add('shine');
+                cafe.hiss(0.6);
+                cafe.tinkle(0.35);
                 jingle();
             }
             const since = doneAt ? now - doneAt : 0;
