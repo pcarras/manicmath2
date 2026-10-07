@@ -460,7 +460,111 @@ export function backdropTexture(scene, id, w, h) {
     return key;
 }
 
+// Scenes painted offline in high resolution (tools/scenes); the others are painted here at runtime
+const PICTURES = ['lisbon'];
+
+export function hasPicture(id) {
+    return PICTURES.includes(id);
+}
+
+// Call from a scene's preload() for the scene in use (and from the shop for the previews)
+export function preloadBackdrop(scene, id) {
+    if (!hasPicture(id) || scene.textures.exists(`scene_${id}`)) return;
+    scene.load.image(`scene_${id}`, `assets/scenes/${id}.webp`);
+    scene.load.json(`scene_${id}_anim`, `assets/scenes/${id}.json`);
+}
+
+function ensureSoftCloud(scene) {
+    if (scene.textures.exists('softCloud')) return;
+    const tex = scene.textures.createCanvas('softCloud', 256, 96);
+    const ctx = tex.getContext();
+    ctx.filter = 'blur(10px)';
+    ctx.fillStyle = 'rgba(190,180,230,0.55)';
+    [[70, 55, 40], [120, 45, 48], [170, 55, 38], [120, 62, 50]].forEach(([x, y, r]) => {
+        ctx.beginPath(); ctx.ellipse(x, y, r * 1.4, r * 0.55, 0, 0, Math.PI * 2); ctx.fill();
+    });
+    tex.refresh();
+}
+
+// The offline picture, scaled to cover the screen (anchored at the bottom, where the city is),
+// with a few quiet animations on top: windows switching on and off, the bridge beacons pulsing,
+// cars crossing, light shimmering on the water and clouds drifting by.
+function createPicture(scene, id, w, h, depth) {
+    const key = `scene_${id}`;
+    const img = scene.add.image(0, 0, key).setOrigin(0.5, 1).setDepth(depth);
+    const src = scene.textures.get(key).getSourceImage();
+    let fit = null;
+    img.fit = (W, H) => {
+        const k = Math.max(W / src.width, H / src.height);
+        img.setScale(k).setPosition(W / 2, H);
+        fit = { k, x0: W / 2 - (src.width * k) / 2, y0: H - src.height * k, iw: src.width * k, ih: src.height * k };
+    };
+    img.fit(w, h);
+    const anim = scene.cache.json.get(`scene_${id}_anim`);
+    if (!anim || settings.get('reduceMotion')) return img;
+    const P = ([x, y]) => [fit.x0 + x * fit.iw, fit.y0 + y * fit.ih];
+    ensureDot(scene);
+    ensureSoftCloud(scene);
+    const add = (o) => o.setDepth(depth + 1);
+
+    // Clouds drifting slowly across the sky band
+    if (anim.clouds) {
+        for (let i = 0; i < 3; i++) {
+            const cy = fit.y0 + rand(anim.clouds[0], anim.clouds[1]) * fit.ih;
+            const c = add(scene.add.image(rand(-100, w), cy, 'softCloud').setScale(rand(1, 2)).setAlpha(rand(0.18, 0.32)));
+            const drift = () => scene.tweens.add({
+                targets: c, x: w + 260, duration: rand(70000, 110000) * ((w + 260 - c.x) / (w + 520)),
+                onComplete: () => { c.x = -260; drift(); }
+            });
+            drift();
+        }
+    }
+    // Windows: some switch off and on again now and then
+    (anim.windows || []).forEach(([x, y]) => {
+        const [px, py] = P([x, y]);
+        if (px < 0 || px > w) return;
+        const d = add(scene.add.image(px, py, 'starDot').setTint(0x0b0820).setScale(0.22 * fit.k * 2.5).setAlpha(0));
+        scene.tweens.add({ targets: d, alpha: 0.95, duration: 200, hold: rand(3000, 9000), yoyo: true, repeat: -1, delay: rand(0, 20000), repeatDelay: rand(6000, 20000) });
+    });
+    // Beacons pulse
+    (anim.beacons || []).forEach((b) => {
+        const [px, py] = P(b);
+        const d = add(scene.add.image(px, py, 'starDot').setTint(0xff4030).setBlendMode(Phaser.BlendModes.ADD).setScale(1.2).setAlpha(0.2));
+        scene.tweens.add({ targets: d, alpha: 1, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    });
+    // Cars crossing the bridge deck
+    if (anim.cars) {
+        const [x0, x1, y] = anim.cars;
+        const a = P([x0, y]);
+        const b = P([x1, y]);
+        for (let i = 0; i < 6; i++) {
+            const right = i % 2 === 0;
+            const car = add(scene.add.image(a[0], a[1], 'starDot').setTint(right ? 0xfff0c8 : 0xff5040)
+                .setBlendMode(Phaser.BlendModes.ADD).setScale(0.35));
+            const go = () => {
+                car.x = right ? a[0] : b[0];
+                scene.tweens.add({ targets: car, x: right ? b[0] : a[0], duration: rand(9000, 14000), delay: rand(0, 6000), onComplete: go });
+            };
+            go();
+        }
+    }
+    // Shimmer on the water
+    if (anim.water) {
+        const wy = fit.y0 + anim.water * fit.ih;
+        for (let i = 0; i < 14; i++) {
+            const s = add(scene.add.rectangle(rand(0, w), rand(wy + 6, h), rand(8, 26), 1.5, 0xffe2b0).setAlpha(0));
+            scene.tweens.add({
+                targets: s, alpha: rand(0.25, 0.6), duration: rand(700, 1400), yoyo: true, repeat: -1, delay: rand(0, 4000),
+                repeatDelay: rand(500, 3000), onRepeat: () => { s.x = rand(0, w); }
+            });
+        }
+    }
+    return img;
+}
+
 export function createBackdrop(scene, id, depth = -10) {
+    const size0 = view(scene);
+    if (scene.textures.exists(`scene_${id}`)) return createPicture(scene, id, size0.w, size0.h, depth);
     if (!PAINT[id]) return createStarfield(scene, depth);
     const size = view(scene);
     const w = Math.max(1, Math.ceil(size.w));

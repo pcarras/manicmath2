@@ -4,7 +4,7 @@ import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX, JUNK_SIDE,
 import { Sfx } from '../sfx.js';
 import { DRILLS } from '../drills.js';
 import { INV, RES, view, setupCamera } from '../display.js';
-import { createBackdrop } from '../backdrops.js';
+import { createBackdrop, preloadBackdrop } from '../backdrops.js';
 import { safeAreaTop, safeAreaBottom } from '../pwa.js';
 import { t } from '../i18n.js';
 import { settings, haptic, isDebug } from '../settings.js';
@@ -109,6 +109,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     preload() {
+        preloadBackdrop(this, currentItem('scene'));
         this.load.audio('explosionSound', 'sounds/explosion1.mp3');
         this.load.audio('clickbutton', 'sounds/clickbutton.mp3');
         this.load.audio('timeSound', 'sounds/snd_time.mp3');
@@ -1937,7 +1938,7 @@ export class GameScene extends Phaser.Scene {
             this.Body.setPosition(p.body, { x: Phaser.Math.Clamp(pos.x, R + 1, w - R - 1), y: pos.y + dh });
             this.Sleeping.set(p.body, false);
         }
-        if (this.bg) this.bg.setDisplaySize(w, h);
+        if (this.bg) { if (this.bg.fit) this.bg.fit(w, h); else this.bg.setDisplaySize(w, h); }
 
         clearTimeout(this.hudTimer);
         this.hudTimer = setTimeout(() => {

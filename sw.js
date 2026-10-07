@@ -32,6 +32,8 @@ const ASSETS = [
     './js/drillbg.js',
     './js/backdrops.js',
     './js/album.js',
+    './assets/scenes/lisbon.webp',
+    './assets/scenes/lisbon.json',
     './js/scenes/AchievementsScene.js',
     './js/scenes/GameScene.js',
     './js/scenes/MenuScene.js',

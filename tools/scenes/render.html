@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000">
+<script type="module">
+import { paintLisbon } from './lisbon.js';
+const PAINTERS = { lisbon: paintLisbon };
+window.renderScene = async (id, W, H) => {
+    const { canvas, anim } = PAINTERS[id](W, H);
+    return { url: canvas.toDataURL('image/webp', 0.86), anim };
+};
+window.ready = true;
+</script>

@@ -4,7 +4,7 @@ import { t, lang } from '../i18n.js';
 import { chunkyButton } from '../ui.js';
 import { RES, view, setupCamera } from '../display.js';
 import { ensurePreviews, ensureTextures, TEX_PX, POP_FX } from '../textures.js';
-import { backdropTexture } from '../backdrops.js';
+import { backdropTexture, preloadBackdrop } from '../backdrops.js';
 import {
     beans, catalog, ownedItems, currentItem, buyItem, equipItem, dailyDeals,
     spares, buySpare, SPARE_PRICE, SPARE_MAX
@@ -25,6 +25,10 @@ export class ShopScene extends Phaser.Scene {
 
     init(data) {
         this.tab = (data && data.tab) || this.tab || 'deals';
+    }
+
+    preload() {
+        catalog('scene').forEach((sc) => preloadBackdrop(this, sc.id));
     }
 
     create() {
@@ -255,7 +259,8 @@ export class ShopScene extends Phaser.Scene {
             const pw = Math.max(80, right - left);
             const ph = 38;
             const { w: vw, h: vh } = view(this);
-            const key = row.item.id === 'space' ? `starfield_${Math.ceil(vw)}x${Math.ceil(vh)}` : backdropTexture(this, row.item.id, Math.ceil(vw), Math.ceil(vh));
+            const pic = `scene_${row.item.id}`;
+            const key = row.item.id === 'space' ? `starfield_${Math.ceil(vw)}x${Math.ceil(vh)}` : this.textures.exists(pic) ? pic : backdropTexture(this, row.item.id, Math.ceil(vw), Math.ceil(vh));
             const src = this.textures.get(key).getSourceImage();
             const scale = pw / src.width;
             const cropY = src.height * 0.6;
