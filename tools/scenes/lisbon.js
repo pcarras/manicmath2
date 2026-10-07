@@ -24,6 +24,8 @@ export function paintLisbon(W, H) {
     glow(ctx, mx, my, 360 * u, 'rgba(190,200,255,0.18)');
     glow(ctx, mx, my, 140 * u, 'rgba(255,245,215,0.35)');
     const mg = ctx.createRadialGradient(mx - 14 * u, my - 14 * u, 4 * u, mx, my, 46 * u);
+    anim.moon = [+(mx / W).toFixed(4), +(my / H).toFixed(4), +((46 * u) / W).toFixed(4)];
+    anim.sky = [0.04, 0.5];
     mg.addColorStop(0, '#fffbea');
     mg.addColorStop(1, '#e9dfc0');
     ctx.fillStyle = mg;

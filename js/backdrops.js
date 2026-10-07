@@ -519,6 +519,35 @@ function createPicture(scene, id, w, h, depth) {
             drift();
         }
     }
+    // Moon: a halo that breathes very slowly
+    if (anim.moon) {
+        const [px, py] = P(anim.moon);
+        const rr = anim.moon[2] * fit.iw;
+        const halo = add(scene.add.image(px, py, 'starDot').setTint(0xfff1cc).setBlendMode(Phaser.BlendModes.ADD)
+            .setScale((rr * 7) / 16).setAlpha(0.18));
+        scene.tweens.add({ targets: halo, alpha: 0.32, scale: (rr * 8.5) / 16, duration: 7000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    }
+    // Stars: a few twinkle, and now and then a shooting star crosses the sky
+    if (anim.sky) {
+        const y0 = fit.y0 + anim.sky[0] * fit.ih;
+        const y1 = fit.y0 + anim.sky[1] * fit.ih;
+        for (let i = 0; i < 18; i++) {
+            const st = add(scene.add.image(rand(0, w), rand(Math.max(0, y0), y1), 'starDot').setTint(0xe8eeff)
+                .setBlendMode(Phaser.BlendModes.ADD).setScale(rand(0.2, 0.4)).setAlpha(0));
+            scene.tweens.add({ targets: st, alpha: rand(0.5, 0.9), duration: rand(1500, 3500), yoyo: true, repeat: -1, delay: rand(0, 6000), repeatDelay: rand(1000, 5000) });
+        }
+        const shoot = () => {
+            const sx = rand(w * 0.1, w * 0.9);
+            const sy = rand(Math.max(0, y0), (y0 + y1) / 2);
+            const st = add(scene.add.rectangle(sx, sy, 46, 1.6, 0xffffff).setAngle(-24).setAlpha(0));
+            scene.tweens.add({
+                targets: st, x: sx - 160, y: sy + 70, alpha: { from: 0.9, to: 0 }, duration: 900, ease: 'Sine.easeIn',
+                onComplete: () => st.destroy()
+            });
+            scene.time.delayedCall(rand(14000, 30000), shoot);
+        };
+        scene.time.delayedCall(rand(6000, 15000), shoot);
+    }
     // Windows: some switch off and on again now and then
     (anim.windows || []).forEach(([x, y]) => {
         const [px, py] = P([x, y]);

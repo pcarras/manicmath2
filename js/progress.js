@@ -311,9 +311,9 @@ export function rerollName() {
 export const SCENES = [
     { id: 'space', price: 0, pt: 'Espaço', en: 'Space' },
     { id: 'lisbon', price: 300, pt: 'Lisboa à noite', en: 'Lisbon by night' },
-    { id: 'porto', price: 300, pt: 'Porto e o Douro', en: 'Porto and the Douro' },
-    { id: 'sintra', price: 300, pt: 'Sintra e a Pena', en: 'Sintra and Pena Palace' },
-    { id: 'algarve', price: 250, pt: 'Falésias do Algarve', en: 'Algarve cliffs' },
+    { id: 'porto', hidden: true, price: 300, pt: 'Porto e o Douro', en: 'Porto and the Douro' },
+    { id: 'sintra', hidden: true, price: 300, pt: 'Sintra e a Pena', en: 'Sintra and Pena Palace' },
+    { id: 'algarve', hidden: true, price: 250, pt: 'Falésias do Algarve', en: 'Algarve cliffs' },
     { id: 'ocean', price: 250, pt: 'Fundo do mar', en: 'Under the sea' },
     { id: 'beach', price: 250, pt: 'Praia ao pôr do sol', en: 'Sunset beach' }
 ];
@@ -332,8 +332,10 @@ export const SPARE_MAX = 2;
 
 const CATALOG = { theme: THEMES, scene: SCENES, pop: POPS };
 
+// Items on sale; `hidden` ones (art still being made) only show to players who already own them
 export function catalog(kind) {
-    return CATALOG[kind];
+    const owned = ownedItems(kind);
+    return CATALOG[kind].filter((it) => !it.hidden || owned.includes(it.id));
 }
 
 export function ownedItems(kind) {
@@ -401,7 +403,7 @@ export function dailyDeals() {
     for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0;
     const next = () => { h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0; h ^= h >>> 13; return h / 4294967296; };
     const pool = [];
-    Object.entries(CATALOG).forEach(([kind, list]) => list.forEach((it) => { if (it.price > 0) pool.push({ kind, item: it }); }));
+    Object.entries(CATALOG).forEach(([kind, list]) => list.forEach((it) => { if (it.price > 0 && !it.hidden) pool.push({ kind, item: it }); }));
     const cuts = [30, 40, 50];
     const out = [];
     while (out.length < 3 && pool.length) {
