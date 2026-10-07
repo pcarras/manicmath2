@@ -198,7 +198,7 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         if (m) m.close();
         const ROW = 52;
         const inMenu = scene.scene.key === 'MenuScene';
-        m = modal(scene, { depth, height: 100 + ROW * ((inMenu ? 10 : 9) - (isDebug() || settings.get('god') ? 0 : 1)) + 76, title: t('settings'), fade: first });
+        m = modal(scene, { depth, height: 100 + ROW * ((inMenu ? 10 : 9) - (isDebug() ? 0 : 1) - (isDebug() || settings.get('god') ? 0 : 1)) + 76, title: t('settings'), fade: first });
         const { panel } = m;
         let y = panel.y + 96;
         ['music', 'sfx', 'vibration'].forEach((key) => {
@@ -234,11 +234,14 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
             render();
         });
         y += ROW;
+        // Developer rows, hidden from players: they show in debug mode (5 quick taps on the version in
+        // the menu). GOD mode also stays visible while it is already on.
         // Gameplay options being tested
-        toggleRow(scene, m, y, t('tests'), t('open'), true, () => openTests(scene, { depth: depth + 40 }));
-        y += ROW;
-        // Testing: unlimited beans, everything open. Hidden from players: it only shows in debug mode
-        // (5 quick taps on the version in the menu), or while it is already on
+        if (isDebug()) {
+            toggleRow(scene, m, y, t('tests'), t('open'), true, () => openTests(scene, { depth: depth + 40 }));
+            y += ROW;
+        }
+        // Testing: unlimited beans, everything open
         const god = !!settings.get('god');
         if (isDebug() || god) {
             toggleRow(scene, m, y, t('godMode'), god ? t('on') : t('off'), god, () => {
