@@ -67,6 +67,16 @@ export class GameScene extends Phaser.Scene {
         if (!this.multi && (this.mode === 'team' || this.mode === 'duel')) this.mode = 'classic';
         this.team = this.multi && this.mode === 'team';
         this.duel = this.multi && this.mode === 'duel';
+        // Scene objects are reused between games: forget everything the last game left on this one
+        this.scoreSyncTimer = null;
+        this.tutBica = null;
+        this.leaveUI = null;
+        this.mpText = null;
+        this.routeText = null;
+        this.sendAllKeys = false;
+        this.keyTick = 0;
+        this.guestValidating = false;
+        this.hostTop = undefined;
         this.seqN = 0;              // order number of each seeded piece (the same piece on both phones)
         this.round = 0;             // team: equations solved by the team so far
         this.lastSolve = null;      // team: my last solve { round, target, i } to settle ties

@@ -20,8 +20,14 @@ export class MultiScene extends Phaser.Scene {
         const top = safeAreaTop();
         this.w = w;
         this.h = h;
+        // Phaser reuses this scene object between visits: everything from the last lobby must be cleared,
+        // or a second game would think it already started (or already sent its board size)
         this.room = null;
         this.waitUI = null;
+        this.link = null;
+        this.starting = false;
+        this.metaSent = false;
+        this.busy = false;
         createStarfield(this);
 
         this.add.text(w / 2, top + 40, t('twoPlayers'), {
