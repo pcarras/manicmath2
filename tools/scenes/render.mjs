@@ -13,8 +13,8 @@ await page.waitForFunction(() => window.ready);
 for (const id of ids) {
     const t0 = Date.now();
     const { url, anim } = await page.evaluate(([id]) => window.renderScene(id, 1170, 2400), [id]);
-    fs.writeFileSync(`assets/scenes/${id}.webp`, Buffer.from(url.split(',')[1], 'base64'));
-    fs.writeFileSync(`assets/scenes/${id}.json`, JSON.stringify(anim));
-    console.log(id, Date.now() - t0, 'ms', fs.statSync(`assets/scenes/${id}.webp`).size, 'bytes');
+    fs.writeFileSync(`assets/scenes/web/${id}.webp`, Buffer.from(url.split(',')[1], 'base64'));
+    fs.writeFileSync(`assets/scenes/web/${id}.json`, JSON.stringify(anim));
+    console.log(id, Date.now() - t0, 'ms', fs.statSync(`assets/scenes/web/${id}.webp`).size, 'bytes');
 }
 await browser.close();

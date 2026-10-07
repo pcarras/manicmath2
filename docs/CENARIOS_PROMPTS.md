@@ -50,9 +50,6 @@
 11. **`beach.png`, Praia ao pôr do sol.**
     > A calm Portuguese beach just after sunset: the last orange and pink light on the horizon, silhouettes of palm trees and fishing boats on the sand, gentle waves, the first stars and a thin crescent moon.
 
-## O que eu faço depois
+## Estado
 
-Quando as imagens estiverem na pasta, eu:
-- ajusto o tamanho e escureço um pouco o centro para as peças se lerem;
-- marco os pontos das animações (janelas a piscar, luzes na água, barcos, nuvens);
-- ligo-as à loja e publico uma versão nova.
+Todas as imagens estão na loja. Para uma imagem nova ou substituída: pôr `nome.png` (768 x 1376 ou maior, vertical) em `assets/scenes/`, acrescentar o cenário em `tools/scenes/process.py` (onde ficam a lua, o céu, a água, as luzes) e correr `python3 tools/scenes/process.py nome`. Isso cria `assets/scenes/web/nome.webp` (a imagem do jogo, com o centro ligeiramente mais calmo), `assets/scenes/thumb/nome.webp` (a miniatura da loja) e `assets/scenes/web/nome.json` (as animações). Depois é só juntar o cenário a `SCENES` em `js/progress.js` e a `PICTURES` em `js/backdrops.js`.

@@ -336,9 +336,15 @@ export function rerollName() {
 export const SCENES = [
     { id: 'space', price: 0, pt: 'Espaço', en: 'Space' },
     { id: 'lisbon', price: 300, pt: 'Lisboa à noite', en: 'Lisbon by night' },
-    { id: 'porto', hidden: true, price: 300, pt: 'Porto e o Douro', en: 'Porto and the Douro' },
-    { id: 'sintra', hidden: true, price: 300, pt: 'Sintra e a Pena', en: 'Sintra and Pena Palace' },
-    { id: 'algarve', hidden: true, price: 250, pt: 'Falésias do Algarve', en: 'Algarve cliffs' },
+    { id: 'alfama', price: 300, pt: 'Alfama ao luar', en: 'Alfama by moonlight' },
+    { id: 'porto', price: 300, pt: 'Porto e o Douro', en: 'Porto and the Douro' },
+    { id: 'sintra', price: 300, pt: 'Sintra e a Pena', en: 'Sintra and Pena Palace' },
+    { id: 'coimbra', price: 300, pt: 'Coimbra', en: 'Coimbra' },
+    { id: 'obidos', price: 300, pt: 'Óbidos', en: 'Óbidos' },
+    { id: 'evora', price: 300, pt: 'Templo de Évora', en: 'Roman Temple of Évora' },
+    { id: 'algarve', price: 250, pt: 'Falésias do Algarve', en: 'Algarve cliffs' },
+    { id: 'madeira', price: 350, pt: 'Funchal, Madeira', en: 'Funchal, Madeira' },
+    { id: 'acores', price: 350, pt: 'Sete Cidades, Açores', en: 'Sete Cidades, Azores' },
     { id: 'ocean', price: 250, pt: 'Fundo do mar', en: 'Under the sea' },
     { id: 'beach', price: 250, pt: 'Praia ao pôr do sol', en: 'Sunset beach' }
 ];

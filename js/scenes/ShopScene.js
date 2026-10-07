@@ -4,7 +4,7 @@ import { t, lang } from '../i18n.js';
 import { chunkyButton } from '../ui.js';
 import { RES, view, setupCamera } from '../display.js';
 import { ensurePreviews, ensureTextures, TEX_PX, POP_FX } from '../textures.js';
-import { backdropTexture, preloadBackdrop } from '../backdrops.js';
+import { backdropTexture, preloadThumb } from '../backdrops.js';
 import {
     beans, catalog, ownedItems, currentItem, buyItem, equipItem, dailyDeals,
     spares, buySpare, SPARE_PRICE, SPARE_MAX, beansLabel } from '../progress.js';
@@ -28,7 +28,7 @@ export class ShopScene extends Phaser.Scene {
     }
 
     preload() {
-        catalog('scene').forEach((sc) => preloadBackdrop(this, sc.id));
+        catalog('scene').forEach((sc) => preloadThumb(this, sc.id));
         preloadMascot(this, ['happy']);
     }
 
@@ -168,7 +168,7 @@ export class ShopScene extends Phaser.Scene {
         g.strokeRoundedRect(14, y, w - 28, cardH, 18);
 
         const name = spare ? t('spareName') : (row.item[lang()] || row.item.en);
-        add(this.add.text(30, y + 20, name, {
+        add(this.add.text(row.kind === 'scene' ? 98 : 30, y + 20, name, {
             fontFamily: 'Righteous', fontSize: '18px', color: '#ffffff'
         }).setOrigin(0, 0.5));
         if (this.tab === 'deals') {
@@ -256,21 +256,21 @@ export class ShopScene extends Phaser.Scene {
                 add(this.add.image(left + size / 2 + i * (size + 4), midY + 4, `prev_${row.item.id}_${k}`).setScale(size / TEX_PX));
             });
         } else if (row.kind === 'scene') {
-            // A slice of the scene, as wide as the preview area
-            const pw = Math.max(80, right - left);
-            const ph = 38;
+            // A small portrait of the scene at the left of the card
+            const pw = 58;
+            const ph = cardH - 16;
             const { w: vw, h: vh } = view(this);
-            const pic = `scene_${row.item.id}`;
+            const pic = `thumb_${row.item.id}`;
             const key = row.item.id === 'space' ? `starfield_${Math.ceil(vw)}x${Math.ceil(vh)}` : this.textures.exists(pic) ? pic : backdropTexture(this, row.item.id, Math.ceil(vw), Math.ceil(vh));
             const src = this.textures.get(key).getSourceImage();
-            const scale = pw / src.width;
-            const cropY = src.height * 0.6;
-            const cropH = Math.min(src.height - cropY, ph / scale);
-            const boxY = midY - ph / 2 + 4;
-            add(this.add.image(left, boxY - cropY * scale, key).setOrigin(0).setScale(scale).setCrop(0, cropY, src.width, cropH));
+            const scale = Math.max(pw / src.width, ph / src.height);
+            const cropH = ph / scale;
+            const cropY = Math.max(0, Math.min(src.height - cropH, src.height * 0.2));
+            const boxY = y + 8;
+            add(this.add.image(26, boxY - cropY * scale, key).setOrigin(0).setScale(scale).setCrop(0, cropY, pw / scale, cropH));
             const frame = add(this.add.graphics());
             frame.lineStyle(2, 0x3a3458, 1);
-            frame.strokeRoundedRect(left, boxY, pw, cropH * scale, 6);
+            frame.strokeRoundedRect(26, boxY, pw, ph, 6);
         } else if (row.kind === 'pop') {
             const fx = POP_FX[row.item.id] || POP_FX.glow;
             const x = left + 60;
