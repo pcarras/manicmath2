@@ -321,3 +321,58 @@ canvas {
 .mm-btn:active { transform: translateY(4px); box-shadow: none !important; }
 .mm-btn--green { background: #22c55e; box-shadow: 0 5px 0 #14732f; }
 .mm-btn--grey { background: #6b7280; box-shadow: 0 5px 0 #3e4249; }
+
+/* ------------------------------------------------------------------ "new coffee flavour" update note */
+
+.mm-flavour {
+    position: fixed;
+    left: 50%;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    z-index: 8000;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: min(370px, calc(100% - 24px));
+    padding: 10px 12px;
+    transform: translateX(-50%);
+    background: linear-gradient(180deg, #4a2614, #2b160b);
+    border: 3px solid #c68a4a;
+    border-radius: 18px;
+    box-shadow: 0 6px 0 #140a24, 0 14px 30px rgba(0, 0, 0, 0.5);
+    font-family: 'Righteous', system-ui, sans-serif;
+    color: #ffffff;
+    cursor: pointer;
+    animation: mm-flavour-in 0.5s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+}
+.mm-flavour--hidden { display: none; }
+.mm-flavour--out { animation: mm-flavour-out 0.25s ease-in both; }
+@keyframes mm-flavour-in { from { transform: translate(-50%, 140%); } to { transform: translate(-50%, 0); } }
+@keyframes mm-flavour-out { to { transform: translate(-50%, 140%); opacity: 0; } }
+
+.mm-flavour__cup { flex: none; animation: mm-wiggle 2.4s ease-in-out infinite; }
+@keyframes mm-wiggle { 0%, 100% { transform: rotate(0); } 6% { transform: rotate(-9deg); } 12% { transform: rotate(8deg); } 18% { transform: rotate(0); } }
+.mm-steam { fill: none; stroke: rgba(255, 255, 255, 0.8); stroke-width: 2.2; stroke-linecap: round; animation: mm-steam 1.6s ease-in-out infinite; }
+.mm-steam--2 { animation-delay: 0.4s; }
+.mm-steam--3 { animation-delay: 0.8s; }
+@keyframes mm-steam { 0% { opacity: 0; transform: translateY(4px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-5px); } }
+
+.mm-flavour__text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mm-flavour__text b { font-weight: normal; font-size: 15px; color: #ffd23f; }
+.mm-flavour__text span { font: 12px Roboto, system-ui, sans-serif; color: #ffd9a8; }
+.mm-flavour__btn {
+    flex: none;
+    padding: 9px 12px 11px;
+    font: 15px 'Righteous', system-ui, sans-serif;
+    color: #ffffff;
+    -webkit-text-stroke: 3px #1b0f2e;
+    paint-order: stroke fill;
+    background: #22c55e;
+    border: 3px solid #140a24;
+    border-radius: 12px;
+    box-shadow: 0 4px 0 #14732f;
+    cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mm-flavour, .mm-flavour__cup, .mm-steam { animation: none; }
+}

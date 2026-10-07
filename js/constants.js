@@ -27,7 +27,7 @@ export const CONSTANTS = {
     TIMER_POWERUP_MS: 20000,   // matches the "+20s" power-up art
     HINT_POWERUP_MS: 20000,
     ICE_CHANCE: 0.15,          // share of number/operator pieces that freeze
-    ICE_FREEZE_MS: 5000,       // time for the ice cover to go from clear to opaque
+    ICE_FREEZE_MS: 15000,      // time for the ice cover to go from clear to opaque (slow: readable for a while)
     HEAT_THAW_MS: 9000,        // heat power-up: frozen pieces stay clear this long, then refreeze slowly
     START_PIECES: 12,          // pieces already falling when a game starts
     DANGER_MS: 1200,           // a settled piece above the death line for this long ends the game

@@ -1,5 +1,6 @@
 // PWA plumbing: service worker + update overlay, install button state, safe area.
-import { playDoubleEspresso, showInstallHelp, isOverlayOpen } from './bica.js';
+import { playDoubleEspresso, showInstallHelp, isOverlayOpen, isIntroPlaying, abortIntro } from './bica.js';
+import { t } from './i18n.js';
 
 const listeners = new Set();
 const notify = () => listeners.forEach((fn) => {
@@ -111,6 +112,8 @@ export function initPWA() {
     }).catch((err) => console.error('SW registration failed:', err));
 }
 
+const bootAt = performance.now();
+
 async function handleUpdate(isActive) {
     if (updating) return;
     updating = true;
@@ -121,30 +124,75 @@ async function handleUpdate(isActive) {
         .then((text) => (text.match(/APP_VERSION\s*=\s*'([^']+)'/) || [])[1] || null)
         .catch(() => null);
 
-    await waitUntilIdle();
-
     const ready = new Promise((resolve) => {
         const t0 = Date.now();
         const tick = () => ((isActive() || Date.now() - t0 > 8000) ? resolve() : setTimeout(tick, 150));
         tick();
     });
-    await playDoubleEspresso({ ready, from, to });
-    // Opening the app after a deploy already loads the new code (network first): no reload needed
-    if (to !== from) window.location.reload();
-    else updating = false;
+
+    // Found while the app is opening: show ONE animation. The double espresso replaces the
+    // single bica intro instead of playing after it.
+    if (isIntroPlaying() || performance.now() - bootAt < 6000) {
+        await abortIntro();
+        await playDoubleEspresso({ ready, from, to });
+        // Opening the app after a deploy already loads the new code (network first): no reload needed
+        if (to !== from) window.location.reload();
+        else updating = false;
+        return;
+    }
+
+    // Found later, while playing: a small "new coffee flavour" note in the menu, never an interruption
+    showFlavourNote(async () => {
+        await playDoubleEspresso({ ready, from, to });
+        window.location.reload();
+    });
 }
 
-// Never interrupt a running game or the intro: wait for the menu / game over screen
-function waitUntilIdle() {
-    return new Promise((resolve) => {
-        const check = () => {
-            const gs = window.game && window.game.scene && window.game.scene.getScene('GameScene');
-            const playing = gs && gs.sys.isActive() && !gs.gameOver;
-            if (playing || isOverlayOpen()) setTimeout(check, 1000);
-            else resolve();
-        };
-        check();
-    });
+// Menu note for an update found mid-session. Only visible on the main menu; tap to update.
+export function showFlavourNote(onTaste) {
+    if (document.querySelector('.mm-flavour')) return;
+    const el = document.createElement('div');
+    el.className = 'mm-flavour';
+    el.innerHTML = `
+        <div class="mm-flavour__cup">
+            <svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true">
+                <path class="mm-steam" d="M17 12c-3-3 3-5 0-8" />
+                <path class="mm-steam mm-steam--2" d="M24 12c-3-3 3-5 0-8" />
+                <path class="mm-steam mm-steam--3" d="M31 12c-3-3 3-5 0-8" />
+                <path d="M9 17h28v11a12 12 0 0 1-12 12h-4A12 12 0 0 1 9 28z" fill="#f4efe6" stroke="#140a24" stroke-width="2.5"/>
+                <path d="M11 19h24v3H11z" fill="#6b3a1e"/>
+                <path d="M11 19h24v1.4H11z" fill="#c68a4a"/>
+                <path d="M37 21h3a5 5 0 0 1 0 10h-3" fill="none" stroke="#f4efe6" stroke-width="3.5"/>
+                <ellipse cx="23" cy="43" rx="17" ry="3" fill="#e8e1d4" stroke="#140a24" stroke-width="2"/>
+                <circle cx="17" cy="27" r="1.6" fill="#140a24"/><circle cx="27" cy="27" r="1.6" fill="#140a24"/>
+                <path d="M19 31c2 2 4 2 6 0" fill="none" stroke="#140a24" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+        </div>
+        <div class="mm-flavour__text">
+            <b></b>
+            <span></span>
+        </div>
+        <button class="mm-flavour__btn"></button>`;
+    el.querySelector('b').textContent = t('newFlavour');
+    el.querySelector('span').textContent = t('newFlavourSub');
+    el.querySelector('button').textContent = t('taste');
+    let taken = false;
+    const taste = () => {
+        if (taken) return;
+        taken = true;
+        clearInterval(watch);
+        el.classList.add('mm-flavour--out');
+        setTimeout(() => el.remove(), 250);
+        onTaste();
+    };
+    el.addEventListener('click', taste);
+    document.body.appendChild(el);
+    // Visible only while the main menu is on screen (hidden during games and other screens)
+    const watch = setInterval(() => {
+        const g = window.game;
+        const onMenu = g && g.scene && g.scene.isActive('MenuScene') && !isOverlayOpen();
+        el.classList.toggle('mm-flavour--hidden', !onMenu);
+    }, 400);
 }
 
 // ------------------------------------------------------------------ keep full screen

@@ -458,6 +458,21 @@ function buildOverlay({ header = '', title = '', small = false, bar = false, ski
 
 // ------------------------------------------------------------------ public
 
+// The studio intro that is playing right now (so an update found at start-up can replace it)
+let currentIntro = null;
+
+export function isIntroPlaying() {
+    return !!currentIntro;
+}
+
+// Ends the intro early; resolves once its overlay is gone
+export function abortIntro() {
+    if (!currentIntro) return Promise.resolve();
+    const intro = currentIntro;
+    intro.finish();
+    return intro.closed;
+}
+
 export function isOverlayOpen() {
     return !!document.querySelector('.bica');
 }
@@ -482,11 +497,18 @@ export function playIntro() {
         let tagShown = false;
         let dinged = false;
 
+        let closedResolve;
+        const closed = new Promise((r) => { closedResolve = r; });
         const finish = () => {
             if (done) return;
             done = true;
-            o.close().then(resolve);
+            currentIntro = null;
+            o.close().then(() => {
+                closedResolve();
+                resolve();
+            });
         };
+        currentIntro = { finish, closed };
         o.root.addEventListener('pointerdown', finish);
         // Safety net: if animation frames are throttled (hidden tab), never block the game
         setTimeout(finish, 6000);

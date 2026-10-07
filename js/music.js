@@ -49,8 +49,39 @@ const TRACKS = [
         call: [[0, 2, 1], [1, 3, 1], [2, 4, 2], [4, 3, 1], [5, 2, 1], [6, 4, 2], [8, 3, 4], [12, 4, 4]],
         answer: [[0, 4, 2], [2, 3, 2], [4, 2, 2], [6, 1, 2], [8, 0, 8]],
         leadWave: 'sawtooth', padCut: 2600
+    },
+    // ---- Mini-game tracks: major keys, lighter and bouncier, so a drill feels like a break
+    {
+        name: 'Recreio', bpm: 112, swing: 0.12,
+        chords: [[48, M7], [45, m7], [41, M7], [43, add9]],                  // Cmaj7 Am7 Fmaj7 G
+        kick: [0, 8], snare: [4, 12], hat: [2, 6, 10, 14], openHat: [],
+        bass: [0, 6, 8, 14], arp: [0, 3, 6, 9, 12], arpWave: 'triangle',
+        call: [[0, 4, 2], [2, 2, 2], [4, 3, 2], [6, 4, 2], [8, 2, 4]],
+        answer: [[0, 1, 2], [2, 2, 2], [4, 0, 4], [12, 2, 4]],
+        leadWave: 'triangle', padCut: 1600
+    },
+    {
+        name: 'Bolhas', bpm: 96, swing: 0.1,
+        chords: [[43, add9], [40, m7], [36, M7], [38, add9]],                // G Em7 Cmaj7 D
+        kick: [0, 10], snare: [8], hat: [4, 12], openHat: [],
+        bass: [0, 10], arp: [0, 2, 4, 6, 8, 10, 12, 14], arpWave: 'sine',
+        call: [[0, 2, 4], [4, 3, 4], [8, 4, 6]],
+        answer: [[0, 3, 4], [4, 2, 4], [8, 0, 8]],
+        leadWave: 'sine', padCut: 1300
+    },
+    {
+        name: 'Giz', bpm: 128, swing: 0,
+        chords: [[41, M7], [43, add9], [45, m7], [48, M7]],                  // Fmaj7 G Am7 C
+        kick: [0, 4, 8, 12], snare: [4, 12], hat: [2, 6, 10, 14], openHat: [],
+        bass: [0, 4, 8, 12], arp: [0, 2, 4, 6, 8, 10, 12, 14], arpWave: 'square',
+        call: [[0, 0, 1], [1, 1, 1], [2, 2, 1], [3, 4, 3], [8, 3, 2], [10, 2, 2], [12, 4, 4]],
+        answer: [[0, 4, 2], [2, 3, 2], [4, 2, 2], [6, 1, 2], [8, 2, 8]],
+        leadWave: 'square', padCut: 2000
     }
 ];
+
+// Track index for a drill's `music` field
+export const DRILL_TRACK = (i) => 4 + i;
 
 // 16-bar song: 4 intro (no lead), 8 theme (call/answer), 2 variation (lead an octave up), 2 breakdown
 const SECTION = (bar) => (bar < 4 ? 'intro' : bar < 12 ? 'theme' : bar < 14 ? 'lift' : 'break');
@@ -408,11 +439,21 @@ export class MusicDirector {
     }
 
     setLevel(level) {
-        const track = trackForLevel(level);
+        this.setTrack(trackForLevel(level));
+    }
+
+    // Any track by index (levels use 0-3, drills 4-6)
+    setTrack(track) {
         if (track === this.current) return;
         this.current = track;
-        if (this.synth) this.synth.setTrack(track);
-        if (this.enabled()) this.synth.start();
+        if (this.enabled()) this.play();
+    }
+
+    // The synth is shared, so always put back this director's track before starting it
+    play() {
+        this.synth.setTrack(this.current);
+        this.synth.danger = this.danger;
+        this.synth.start();
     }
 
     setDanger(on) {
@@ -426,7 +467,7 @@ export class MusicDirector {
         this.held = on;
         if (!this.synth) return;
         if (on) this.synth.stop(0.25);
-        else if (this.enabled()) this.synth.start();
+        else if (this.enabled()) this.play();
     }
 
     pause() {
@@ -436,13 +477,13 @@ export class MusicDirector {
 
     resume() {
         this.paused = false;
-        if (this.enabled()) this.synth.start();
+        if (this.enabled()) this.play();
     }
 
     // Music setting toggled
     refresh() {
         if (!this.synth) return;
-        if (this.enabled()) this.synth.start();
+        if (this.enabled()) this.play();
         else this.synth.stop(0.1);
     }
 

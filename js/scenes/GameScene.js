@@ -1657,6 +1657,7 @@ export class GameScene extends Phaser.Scene {
         for (let i = 0; i < 3; i++) this.deselect(i);
         this.sfx.stopTickTock();
         this.sfx.pauseLoops();
+        this.music.hold(true);   // the mini game brings its own music
         const d = Phaser.Utils.Array.GetRandom(DRILLS);
         this.scene.pause();
         this.scene.launch('DrillScene', { id: d.id, bonus: true });
@@ -1667,6 +1668,7 @@ export class GameScene extends Phaser.Scene {
         this.inBonus = false;
         this.scene.resume();
         this.sfx.resumeLoops();
+        if (this.timerRemaining <= 0) this.music.hold(false);
         if (this.timerRemaining > 0) this.sfx.startTickTock();
         if (points > 0) {
             this.addScore(points, this.w / 2, this.h * 0.42, 0xffd23f);
@@ -1791,13 +1793,21 @@ export class GameScene extends Phaser.Scene {
             if (settings.get('sfx') && this.cache.audio.exists(isGo ? 'bonusSound' : 'clickbutton')) {
                 this.sound.play(isGo ? 'bonusSound' : 'clickbutton', { volume: 0.5, detune: isGo ? 0 : i * 200 });
             }
+            // Each number pops in, holds so it can be read, then fades (about 0.8 s per beat)
             this.tweens.add({
                 targets: label,
-                scale: isGo ? 1.3 : 1,
-                alpha: isGo ? 0 : 0.2,
-                duration: isGo ? 520 : 380,
-                ease: isGo ? 'Back.easeOut' : 'Cubic.easeOut',
-                onComplete: () => step(i + 1)
+                scale: isGo ? 1.35 : 1,
+                duration: isGo ? 380 : 340,
+                ease: 'Back.easeOut',
+                onComplete: () => this.tweens.add({
+                    targets: label,
+                    alpha: 0,
+                    scale: isGo ? 1.6 : 0.85,
+                    delay: isGo ? 300 : 220,
+                    duration: isGo ? 320 : 240,
+                    ease: 'Cubic.easeIn',
+                    onComplete: () => step(i + 1)
+                })
             });
         };
         step(0);
