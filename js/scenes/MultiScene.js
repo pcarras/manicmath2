@@ -153,12 +153,17 @@ export class MultiScene extends Phaser.Scene {
             if (startAt) {
                 const left = Math.ceil((startAt - room.serverNow()) / 1000);
                 // TEAM: both phones show one board, so they must be linked directly before starting
-                const linked = room.mode !== 'team' || (link && link.open);
+                if (link && link.open && room.me === 0 && !this.metaSent) {
+                    this.metaSent = true;
+                    const size = view(this);
+                    link.send({ meta: { w: size.w, h: size.h, top: Math.round(safeAreaTop()) } });
+                }
+                const linked = room.mode !== 'team' || (link && link.open && (room.me === 0 || link.meta));
                 this.tweens.killTweensOf(status);
                 status.setAlpha(1);
                 if (left > 0) status.setText(t('roomStartsIn', { n: left }));
                 else if (!linked) {
-                    status.setText(t('linking'));
+                    status.setText(`${t('linking')}\n${link ? link.diag() : ''}`);
                     if (left < -15 && !this.starting) {
                         this.starting = true;
                         link.close();

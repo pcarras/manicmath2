@@ -19,13 +19,13 @@ async function iceServers() {
 const GATHER_MS = 2500;
 
 // Waits until the local description has its candidates (or a short timeout)
-function gathered(pc) {
+function gathered(pc, ms = GATHER_MS) {
     if (pc.iceGatheringState === 'complete') return Promise.resolve();
     return new Promise((resolve) => {
         const done = () => { pc.removeEventListener('icegatheringstatechange', check); resolve(); };
         const check = () => { if (pc.iceGatheringState === 'complete') done(); };
         pc.addEventListener('icegatheringstatechange', check);
-        setTimeout(done, GATHER_MS);
+        setTimeout(done, ms);
     });
 }
 
@@ -38,6 +38,9 @@ export class Link {
         this.closeListeners = new Set();
         this.open = false;
         this.closed = false;
+        this.attempt = 0;
+        this.servers = ICE;
+        this.hasTurn = false;
         this.ready = new Promise((resolve) => { this.resolveReady = resolve; });
         this.pending = [];
         this.offSignal = room.onEvent((ev) => {
@@ -48,22 +51,47 @@ export class Link {
     }
 
     async start() {
-        this.pc = new RTCPeerConnection({ iceServers: await iceServers() });
+        this.servers = await iceServers();
+        this.hasTurn = this.servers.some((s) => [].concat(s.urls).some((u) => /^turns?:/.test(u)));
         if (this.closed) return;
-        this.pc.addEventListener('connectionstatechange', () => {
-            const s = this.pc.connectionState;
-            if ((s === 'failed' || s === 'closed' || s === 'disconnected') && this.open) this.lost();
+        this.newPc(0);
+        this.pending.splice(0).forEach((ev) => this.onSignal(ev));
+    }
+
+    // A fresh peer connection. Attempt 0 lets the browser pick any route; later attempts force the
+    // TURN relay, which works when two phones cannot reach each other (different browsers on one
+    // computer, strict routers, mobile data).
+    newPc(attempt) {
+        clearTimeout(this.retryTimer);
+        if (this.pc) { try { this.pc.close(); } catch { /* already closed */ } }
+        this.attempt = attempt;
+        this.dc = this.fast = null;
+        this.pc = new RTCPeerConnection({
+            iceServers: this.servers,
+            iceTransportPolicy: attempt >= 1 && this.hasTurn ? 'relay' : 'all'
+        });
+        const pc = this.pc;
+        pc.addEventListener('connectionstatechange', () => {
+            if (pc !== this.pc) return;
+            const st = pc.connectionState;
+            if ((st === 'failed' || st === 'closed' || st === 'disconnected') && this.open) this.lost();
         });
         if (this.host) {
             // Events (reliable and in order) and the board stream (a late frame is useless, so it is
             // never retransmitted and never makes the next ones wait)
-            this.attach(this.pc.createDataChannel('game', { ordered: true }));
-            this.attach(this.pc.createDataChannel('snap', { ordered: false, maxRetransmits: 0 }));
-            this.makeOffer();
+            this.attach(pc.createDataChannel('game', { ordered: true }));
+            this.attach(pc.createDataChannel('snap', { ordered: false, maxRetransmits: 0 }));
+            this.makeOffer(attempt);
         } else {
-            this.pc.addEventListener('datachannel', (e) => this.attach(e.channel));
+            pc.addEventListener('datachannel', (e) => { if (pc === this.pc) this.attach(e.channel); });
         }
-        this.pending.splice(0).forEach((ev) => this.onSignal(ev));
+    }
+
+    // What the lobby shows when linking takes long (helps finding out why)
+    diag() {
+        const pc = this.pc;
+        if (!pc) return 'starting';
+        return `${this.attempt > 0 ? 'relay ' : ''}${pc.signalingState}/${pc.iceConnectionState}`;
     }
 
     attach(dc) {
@@ -77,30 +105,42 @@ export class Link {
         dc.addEventListener('message', (e) => {
             let msg;
             try { msg = JSON.parse(e.data); } catch { return; }
+            if (msg.meta) this.meta = msg.meta;       // the host's board size (see GameScene.hostMeta)
             this.listeners.forEach((fn) => fn(msg));
         });
-        dc.addEventListener('close', () => this.lost());
+        dc.addEventListener('close', () => { if (dc === this.dc || dc === this.fast) this.lost(); });
     }
 
-    async makeOffer() {
-        await this.pc.setLocalDescription(await this.pc.createOffer());
-        await gathered(this.pc);
-        this.room.send({ type: 'signal', kind: 'offer', sig: JSON.stringify(this.pc.localDescription) });
+    async makeOffer(attempt) {
+        const pc = this.pc;
+        await pc.setLocalDescription(await pc.createOffer());
+        await gathered(pc, attempt > 0 ? 5000 : GATHER_MS);
+        if (pc !== this.pc || this.closed) return;
+        this.room.send({ type: 'signal', kind: 'offer', sig: JSON.stringify(pc.localDescription), try: attempt });
+        // Not linked after a while: try again through the relay
+        this.retryTimer = setTimeout(() => {
+            if (!this.open && !this.closed && this.attempt < 2) this.newPc(this.attempt + 1);
+        }, 9000);
     }
 
     async onSignal(ev) {
         if (ev.type !== 'signal' || this.closed) return;
         try {
             const desc = JSON.parse(ev.sig);
+            const attempt = ev.try || 0;
             if (ev.kind === 'offer' && !this.host) {
-                await this.pc.setRemoteDescription(desc);
-                await this.pc.setLocalDescription(await this.pc.createAnswer());
-                await gathered(this.pc);
-                this.room.send({ type: 'signal', kind: 'answer', sig: JSON.stringify(this.pc.localDescription) });
-            } else if (ev.kind === 'answer' && this.host && !this.pc.currentRemoteDescription) {
+                if (this.open || attempt < this.attempt) return;
+                if (attempt > this.attempt) this.newPc(attempt);
+                const pc = this.pc;
+                await pc.setRemoteDescription(desc);
+                await pc.setLocalDescription(await pc.createAnswer());
+                await gathered(pc, attempt > 0 ? 5000 : GATHER_MS);
+                if (pc !== this.pc || this.closed) return;
+                this.room.send({ type: 'signal', kind: 'answer', sig: JSON.stringify(pc.localDescription), try: attempt });
+            } else if (ev.kind === 'answer' && this.host && attempt === this.attempt && !this.pc.currentRemoteDescription) {
                 await this.pc.setRemoteDescription(desc);
             }
-        } catch { /* a broken handshake just times out */ }
+        } catch { /* a broken handshake is retried by the host */ }
     }
 
     // Resolves true when the channel opens, false after `ms`
@@ -139,6 +179,7 @@ export class Link {
         this.offSignal();
         this.listeners.clear();
         this.closeListeners.clear();
+        clearTimeout(this.retryTimer);
         this.closed = true;
         try { if (this.pc) this.pc.close(); } catch { /* already closed */ }
     }

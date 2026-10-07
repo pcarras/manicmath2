@@ -235,7 +235,8 @@ export class GameScene extends Phaser.Scene {
         const total = 3 * s + 4 * gap + eqW + targetW;
 
         // Keep the HUD below notches / the iOS status bar when installed full screen
-        const top = Math.round(safeAreaTop());
+        // On the second TEAM phone the layout copies the host's (hostTop), so both boards match
+        const top = Math.round(this.hostTop !== undefined ? this.hostTop : safeAreaTop());
         this.uiTop = top;
         this.slotSize = s;
         this.eqY = top + 50 + s / 2;
@@ -252,6 +253,11 @@ export class GameScene extends Phaser.Scene {
         this.equalsX = x + eqW / 2;
         x += eqW + gap;
         this.targetX = x + targetW / 2;
+    }
+
+    // TEAM host: the size of this board, so the other phone can fit exactly the same board on its screen
+    hostMeta() {
+        return { w: this.w, h: this.h, top: Math.round(safeAreaTop()) };
     }
 
     // Rebuilds the whole HUD for the current size / language, keeping the game state
@@ -1927,6 +1933,7 @@ export class GameScene extends Phaser.Scene {
         this.updateMpHud();
         const offEv = room.onEvent((ev) => this.onNet(ev));
         if (this.link) {
+            this.link.send({ meta: this.hostMeta() });
             this.link.onMessage((msg) => this.onGuest(msg));
             this.link.onClose(() => { if (!this.gameOver) this.endGame('left'); });
         }
@@ -2388,6 +2395,7 @@ export class GameScene extends Phaser.Scene {
         }
         if (this.bg) { if (this.bg.fit) this.bg.fit(w, h); else this.bg.setDisplaySize(w, h); }
 
+        if (this.link) this.link.send({ meta: this.hostMeta() });
         clearTimeout(this.hudTimer);
         this.hudTimer = setTimeout(() => {
             if (!this.sys.isActive() && !this.paused) return;

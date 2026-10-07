@@ -35,12 +35,20 @@ export class GuestScene extends GameScene {
 
     create() {
         setupCamera(this);
+        // The board is the host's board: same width and height (so every piece sits where it does on
+        // the host), scaled to fit this screen with bars around it if the shapes differ
         const size = view(this);
-        this.w = size.w;
-        this.h = size.h;
+        const dims = this.peer.meta || { w: size.w, h: size.h, top: undefined };
+        this.w = dims.w;
+        this.h = dims.h;
+        this.hostTop = dims.top;
+        this.fitCamera();
+        const onScale = () => this.fitCamera();
+        this.scale.on('resize', onScale);
+        this.events.once('shutdown', () => this.scale.off('resize', onScale));
         this.time.paused = false;
         ensureTextures(this);
-        this.bg = createBackdrop(this, currentItem('scene'));
+        this.bg = createBackdrop(this, currentItem('scene'), -10, { w: this.w, h: this.h });
         this.createFx();
         this.buildHud();
         this.createRings();
@@ -64,10 +72,32 @@ export class GuestScene extends GameScene {
         this.gameStarted = true;
     }
 
+    // Zoom and shift the camera so the host's w x h board fits this screen, centred
+    fitCamera() {
+        const cam = this.cameras.main;
+        const sw = this.scale.width;
+        const sh = this.scale.height;
+        const z = Math.min(sw / this.w, sh / this.h);
+        cam.setZoom(z);
+        cam.setScroll(-(sw - this.w * z) / (2 * z), -(sh - this.h * z) / (2 * z));
+    }
+
+    // The host's screen changed shape (rotation, address bar): follow it
+    applyMeta(m) {
+        if (!m || (m.w === this.w && m.h === this.h && m.top === this.hostTop)) return;
+        this.w = m.w;
+        this.h = m.h;
+        this.hostTop = m.top;
+        if (this.bg) { if (this.bg.fit) this.bg.fit(m.w, m.h); else this.bg.setDisplaySize(m.w, m.h); }
+        this.buildHud();
+        this.fitCamera();
+    }
+
     // ------------------------------------------------------------------ from the host
 
     onHost(msg) {
-        if (msg.keys) Object.assign(this.keys, msg.keys);
+        if (msg.meta) this.applyMeta(msg.meta);
+        else if (msg.keys) Object.assign(this.keys, msg.keys);
         else if (msg.s) this.queueSnapshot(msg);
         else if (msg.fx) this.playFx(msg);
         else if (msg.over && !this.gameOver) this.endGame(msg.reason === 'board' ? 'mateOver' : 'left');

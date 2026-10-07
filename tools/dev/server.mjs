@@ -10,6 +10,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.argv[2] || 8790);
 process.env.KV_REST_API_URL = 'http://fake-redis';
 process.env.KV_REST_API_TOKEN = 'dev';
+// DEV_TURN=1 pretends Cloudflare TURN is configured, to test how the game behaves with relay servers listed
+if (process.env.DEV_TURN) {
+    process.env.CF_TURN_KEY_ID = 'dev';
+    process.env.CF_TURN_API_TOKEN = 'dev';
+}
 
 const db = new Map();   // key -> string | Map (hash) | Array (list) | sorted set as Map
 function run([cmd, key, ...a]) {
@@ -33,6 +38,12 @@ globalThis.fetch = async (url, init) => {
     if (String(url).startsWith('http://fake-redis')) {
         const cmds = JSON.parse(init.body);
         return new Response(JSON.stringify(cmds.map((c) => ({ result: run(c) }))), { status: 200 });
+    }
+    if (process.env.DEV_TURN && String(url).startsWith('https://rtc.live.cloudflare.com')) {
+        return new Response(JSON.stringify({ iceServers: [
+            { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.cloudflare.com:443'] },
+            { urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:3478?transport=tcp', 'turns:turn.cloudflare.com:5349?transport=tcp', 'turn:turn.cloudflare.com:443?transport=udp', 'turn:turn.cloudflare.com:80?transport=tcp', 'turns:turn.cloudflare.com:443?transport=tcp'], username: 'u', credential: 'c' }
+        ] }), { status: 201 });
     }
     return realFetch(url, init);
 };

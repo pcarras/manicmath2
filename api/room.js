@@ -73,6 +73,7 @@ function cleanEvent(ev) {
         if (!['offer', 'answer'].includes(ev.kind) || typeof ev.sig !== 'string' || ev.sig.length > 16000) return null;
         out.kind = ev.kind;
         out.sig = ev.sig;
+        if (Number.isInteger(ev.try) && ev.try >= 0 && ev.try <= 5) out.try = ev.try;
     }
     return out;
 }

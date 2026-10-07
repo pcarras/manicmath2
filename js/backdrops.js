@@ -591,11 +591,11 @@ function createPicture(scene, id, w, h, depth) {
     return img;
 }
 
-export function createBackdrop(scene, id, depth = -10) {
-    const size0 = view(scene);
+export function createBackdrop(scene, id, depth = -10, forced = null) {
+    const size0 = forced || view(scene);
     if (scene.textures.exists(`scene_${id}`)) return createPicture(scene, id, size0.w, size0.h, depth);
-    if (!PAINT[id]) return createStarfield(scene, depth);
-    const size = view(scene);
+    if (!PAINT[id]) return createStarfield(scene, depth, forced);
+    const size = forced || view(scene);
     const w = Math.max(1, Math.ceil(size.w));
     const h = Math.max(1, Math.ceil(size.h));
     const bg = scene.add.image(0, 0, backdropTexture(scene, id, w, h)).setOrigin(0).setDisplaySize(w, h).setDepth(depth);

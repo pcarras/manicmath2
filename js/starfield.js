@@ -125,9 +125,9 @@ function paintSky(ctx, w, h) {
     ctx.globalAlpha = 1;
 }
 
-export function createStarfield(scene, depth = -10) {
+export function createStarfield(scene, depth = -10, forced = null) {
     // A 0-size canvas throws on refresh (e.g. a window that starts hidden)
-    const size = view(scene);
+    const size = forced || view(scene);
     const w = Math.max(1, Math.ceil(size.w));
     const h = Math.max(1, Math.ceil(size.h));
     const key = `starfield_${w}x${h}`;
