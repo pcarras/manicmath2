@@ -122,7 +122,8 @@ export class Link {
     diag() {
         const pc = this.pc;
         if (!pc) return 'waiting';
-        return `${this.attempt > 0 ? 'relay ' : ''}${pc.signalingState}/${pc.iceConnectionState}`;
+        const last = (this.trace || []).slice(-3).join('\n');
+        return `${this.attempt > 0 ? 'relay ' : ''}${pc.signalingState}/${pc.iceConnectionState}${last ? `\n${last}` : ''}`;
     }
 
     attach(dc) {

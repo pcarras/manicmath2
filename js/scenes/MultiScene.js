@@ -132,8 +132,8 @@ export class MultiScene extends Phaser.Scene {
         }).setOrigin(0.5));
         const p0 = D(this.add.text(panel.cx, panel.y + 186, '', { fontFamily: 'Righteous', fontSize: '17px', color: '#ffffff' }).setOrigin(0.5));
         const p1 = D(this.add.text(panel.cx, panel.y + 216, '', { fontFamily: 'Righteous', fontSize: '17px', color: '#ffffff' }).setOrigin(0.5));
-        const status = D(this.add.text(panel.cx, panel.y + 270, t('waitingFriend'), {
-            fontFamily: 'Righteous', fontSize: '18px', color: '#ffd9a8', align: 'center', wordWrap: { width: panel.w - 40 }
+        const status = D(this.add.text(panel.cx, panel.y + 262, t('waitingFriend'), {
+            fontFamily: 'Righteous', fontSize: '16px', color: '#ffd9a8', align: 'center', wordWrap: { width: panel.w - 40 }
         }).setOrigin(0.5));
         this.tweens.add({ targets: status, alpha: 0.4, duration: 700, yoyo: true, repeat: -1 });
         m.add(chunkyButton(this, panel.cx, panel.y + panel.h - 40, t('cancel'), 0x6b7280, () => {
