@@ -366,6 +366,64 @@ function drawFlameIcon(ctx, c) {
     ctx.restore();
 }
 
+// Junk ("trambolho"): a heavy grey rock. hp 3 = whole, then cracks spread until it breaks.
+const JUNK_SPOTS = [[-0.35, -0.3, 0.16], [0.3, -0.42, 0.11], [0.42, 0.2, 0.14], [-0.2, 0.38, 0.12], [0.05, 0.05, 0.09]];
+const JUNK_CRACKS = [
+    [[-0.05, -0.95], [0.1, -0.45], [-0.12, -0.1], [0.08, 0.3]],
+    [[0.9, 0.1], [0.45, 0.05], [0.25, 0.32], [0.38, 0.7]],
+    [[-0.9, -0.2], [-0.5, -0.05], [-0.3, 0.3], [-0.55, 0.7]],
+    [[0.1, -0.45], [0.45, -0.55]],
+    [[-0.12, -0.1], [-0.5, -0.4]]
+];
+
+function drawJunk(ctx, c, hp, style = {}) {
+    const g = ctx.createRadialGradient(c - R * 0.3, c - R * 0.35, R * 0.1, c, c, R);
+    g.addColorStop(0, '#9a9aa8');
+    g.addColorStop(0.6, '#5f5f6e');
+    g.addColorStop(1, '#34343f');
+    ctx.fillStyle = g;
+    circleFill(ctx, c, R);
+    ctx.fill();
+    ctx.lineWidth = style.hc ? 6 : 3.5;
+    ctx.strokeStyle = style.hc ? '#ffffff' : 'rgba(10,4,20,0.85)';
+    ctx.stroke();
+    // pitted surface
+    for (const [x, y, r] of JUNK_SPOTS) {
+        ctx.fillStyle = 'rgba(30,30,40,0.45)';
+        ctx.beginPath();
+        ctx.arc(c + x * R, c + y * R, r * R, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        ctx.beginPath();
+        ctx.arc(c + x * R - 1.5, c + y * R - 1.5, r * R * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    // heavy weight marker so it reads as "not a number"
+    ctx.save();
+    ctx.fillStyle = 'rgba(20,20,28,0.55)';
+    ctx.font = `bold ${Math.round(R * 0.62)}px Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✕', c, c + 2);
+    ctx.restore();
+    // cracks: more of them as hp drops
+    const n = hp >= 3 ? 0 : hp === 2 ? 2 : 5;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let k = 0; k < n; k++) {
+        const pts = JUNK_CRACKS[k];
+        [[4, 'rgba(10,8,16,0.9)'], [1.5, 'rgba(255,220,170,0.55)']].forEach(([w, col]) => {
+            ctx.lineWidth = w;
+            ctx.strokeStyle = col;
+            ctx.beginPath();
+            pts.forEach(([x, y], i) => (i ? ctx.lineTo(c + x * R, c + y * R) : ctx.moveTo(c + x * R, c + y * R)));
+            ctx.stroke();
+        });
+    }
+    ctx.restore();
+}
+
 function drawClock(ctx, c) {
     ctx.save();
     ctx.strokeStyle = '#ffffff';
@@ -423,6 +481,7 @@ export function preloadPieceAssets(scene) {
 export function pieceTextureKey(piece) {
     if (piece.type === 'number') return `piece_num_${piece.value}`;
     if (piece.type === 'operator') return `piece_op_${OP_KEYS[piece.value]}`;
+    if (piece.type === 'junk') return `piece_junk_${piece.hp}`;
     return `piece_special_${piece.special}`;
 }
 
@@ -592,6 +651,9 @@ function bakePieces(scene, prefix, style) {
         drawBall(ctx, c, COLORS.specials.recycle, style);
         drawRecycleIcon(ctx, c);
     });
+    for (let hp = 1; hp <= 3; hp++) {
+        canvasTexture(scene, `${prefix}junk_${hp}`, S, S, (ctx) => drawJunk(ctx, c, hp, style));
+    }
     canvasTexture(scene, `${prefix}special_heat`, S, S, (ctx) => {
         drawBall(ctx, c, COLORS.specials.heat, style);
         drawFlameIcon(ctx, c);

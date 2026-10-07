@@ -20,6 +20,8 @@ const {
 
 const OPS = ['+', '-', '×', '÷'];
 const TAP_RADIUS_SQ = (R * 1.2) ** 2;
+// While swiping, only the middle of a piece catches the finger, so passing near a piece does not pick it
+const SWIPE_RADIUS_SQ = (R * 0.7) ** 2;
 
 function calc(a, op, b) {
     switch (op) {
@@ -51,6 +53,13 @@ export class GameScene extends Phaser.Scene {
         this.lastDailySecs = -1;
         this.solvedOps = [];               // operator of each equation, for the share grid
         this.beansEarned = 0;              // coffee beans won during this game (paid as they come)
+        // Options being tested (settings > TESTS), fixed for the whole game
+        this.dragMode = !this.tutorial && settings.get('inputMode') === 'drag';
+        this.energyOn = !this.tutorial && !!settings.get('energy');
+        this.dragging = false;
+        this.chain = [];                   // pieces picked in the current swipe, in order
+        this.energy = 0;                   // 0..1
+        this.chooser = null;
         this.pieceRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-pieces`]) : null;
         this.targetRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-targets`]) : null;
         this.level = 1;
@@ -146,6 +155,12 @@ export class GameScene extends Phaser.Scene {
         if (this.tutorial) this.hand = this.add.image(0, 0, 'hand').setDepth(160).setVisible(false).setScale(INV);
 
         this.input.on('pointerdown', this.onPointerDown, this);
+        if (this.dragMode) {
+            this.chainGfx = this.add.graphics().setDepth(13).setBlendMode(Phaser.BlendModes.ADD);
+            this.input.on('pointermove', this.onPointerMove, this);
+            this.input.on('pointerup', this.onPointerUp, this);
+            this.input.on('pointerupoutside', this.onPointerUp, this);
+        }
 
         this.sound.stopAll();
         // Original soundtrack at levels 1-2, procedural chiptune tracks after (see music.js)
@@ -227,6 +242,7 @@ export class GameScene extends Phaser.Scene {
         if (this.timerRemaining > 0) this.timerOverlay.setAlpha(0.1);
         this.nextKey = null;
         this.updateLevelHud();
+        this.updateEnergyHud();
 
         for (let i = 0; i < 3; i++) {
             const d = this.slotDisplays[i];
@@ -308,8 +324,9 @@ export class GameScene extends Phaser.Scene {
         // Blue tint while the timer power-up holds the spawn
         this.timerOverlay = hud(this.add.rectangle(w / 2, h / 2, w, h, 0x3b82f6, 1).setDepth(5).setAlpha(0));
 
-        // Level progress ("XP bar") along the bottom of the panel
+        // Level progress ("XP bar") along the bottom of the panel; energy bar on its right (test option)
         this.levelBar = hud(this.add.graphics().setDepth(101));
+        this.energyBar = this.energyOn ? hud(this.add.graphics().setDepth(101)) : null;
 
         if (this.debug) {
             this.perfText = hud(this.add.text(12, this.uiHeight + 6, '', {
@@ -431,6 +448,8 @@ export class GameScene extends Phaser.Scene {
                 this.hand.setVisible(false);
             }
         }
+
+        if (this.dragging) this.drawChain();
 
         if (this.needsWake) {
             for (let i = 0; i < pieces.length; i++) this.Sleeping.set(pieces[i].body, false);
@@ -646,9 +665,12 @@ export class GameScene extends Phaser.Scene {
     createPiece(data, x, y) {
         const color = data.type === 'number' ? COLORS.numbers[data.value % COLORS.numbers.length]
             : data.type === 'operator' ? COLORS.operators[data.value]
-                : COLORS.specials[data.special];
+                : data.type === 'junk' ? 0x6b6b78
+                    : COLORS.specials[data.special];
 
-        const body = this.matter.add.circle(x, y, R, { ...PIECE_BODY, label: 'piece' });
+        // Junk is heavy: it sinks into the pile and shoves pieces aside
+        const bodyOpts = data.type === 'junk' ? { ...PIECE_BODY, density: 0.004, friction: 0.08 } : PIECE_BODY;
+        const body = this.matter.add.circle(x, y, R, { ...bodyOpts, label: 'piece' });
         this.Body.setVelocity(body, { x: Phaser.Math.FloatBetween(-1.2, 1.2), y: 3 });
 
         const img = this.add.image(x, y, pieceTextureKey(data)).setDepth(10).setScale(INV);
@@ -658,7 +680,7 @@ export class GameScene extends Phaser.Scene {
             this.tweens.add({
                 targets: img, scale: 1.08 * INV, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut'
             });
-        } else if (!data.noIce && (data.iceRoll !== undefined ? data.iceRoll : Math.random() < ICE_CHANCE)
+        } else if (data.type !== 'junk' && !data.noIce && (data.iceRoll !== undefined ? data.iceRoll : Math.random() < ICE_CHANCE)
             && this.textures.exists('ice')) {
             // Ice cover fades in gradually: the label is readable at first, then hidden
             p.ice = this.add.image(x, y, 'ice').setDepth(11).setAlpha(0).setScale(INV);
@@ -687,8 +709,10 @@ export class GameScene extends Phaser.Scene {
 
     // ------------------------------------------------------------------ input & selection
 
-    onPointerDown(pointer) {
+    onPointerDown(pointer, over) {
         if (!this.gameStarted || this.gameOver || this.validating || this.paused) return;
+        // Buttons (pause, the energy chooser) handle their own taps
+        if (over && over.length) return;
         // world coordinates: the camera is zoomed by RES (see display.js)
         const x = pointer.worldX;
         const y = pointer.worldY;
@@ -717,12 +741,87 @@ export class GameScene extends Phaser.Scene {
                 best = p;
             }
         }
-        if (best) this.selectPiece(best);
+        if (!best) return;
+        if (this.dragMode && !best.selected && best.type !== 'special' && best.type !== 'junk') {
+            this.dragging = true;
+            this.chain = [];
+        }
+        this.selectPiece(best);
+    }
+
+    pieceAt(x, y, radiusSq = TAP_RADIUS_SQ) {
+        let best = null;
+        let bestD = radiusSq;
+        for (const p of this.pieces) {
+            const dx = p.body.position.x - x;
+            const dy = p.body.position.y - y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = p;
+            }
+        }
+        return best;
+    }
+
+    // Swipe: passing over a piece adds it if its slot is free; going back to the previous piece undoes
+    onPointerMove(pointer) {
+        if (!this.dragging || this.validating || this.paused || this.gameOver) return;
+        const p = this.pieceAt(pointer.worldX, pointer.worldY, SWIPE_RADIUS_SQ);
+        if (!p || p === this.chain[this.chain.length - 1]) return;
+        if (p === this.chain[this.chain.length - 2]) {
+            const last = this.chain.pop();
+            if (last.selected) this.deselect(last.slot);
+            this.playClick();
+            return;
+        }
+        if (p.selected || p.type === 'special' || p.type === 'junk') return;
+        const free = p.type === 'operator' ? !this.slots[1] : (!this.slots[0] || !this.slots[2]);
+        if (free) this.selectPiece(p);
+    }
+
+    // Solve on release; a partial swipe stays selected so it can be finished with taps
+    onPointerUp() {
+        if (!this.dragging) return;
+        this.dragging = false;
+        this.chain = [];
+        this.chainGfx.clear();
+        if (this.slots[0] && this.slots[1] && this.slots[2] && !this.validating) {
+            this.validating = true;
+            this.time.delayedCall(140, () => this.validate());
+        }
+    }
+
+    drawChain() {
+        const g = this.chainGfx;
+        g.clear();
+        const pts = this.chain.filter((p) => p.alive).map((p) => ({ x: p.img.x, y: p.img.y }));
+        if (pts.length === 0) return;
+        const ptr = this.input.activePointer;
+        if (this.chain.length < 3) pts.push({ x: ptr.worldX, y: ptr.worldY });
+        [[14, 0xffe066, 0.18], [7, 0xffe066, 0.45], [3, 0xffffff, 0.95]].forEach(([w, c, a]) => {
+            g.lineStyle(w, c, a);
+            g.beginPath();
+            g.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+            g.strokePath();
+        });
+        pts.slice(0, this.chain.length).forEach((q) => {
+            g.fillStyle(0xffffff, 0.9);
+            g.fillCircle(q.x, q.y, 6);
+        });
     }
 
     selectPiece(p) {
         if (p.type === 'special') {
             this.activateSpecial(p);
+            return;
+        }
+        // Junk cannot be used: it just thuds
+        if (p.type === 'junk') {
+            this.tweens.add({ targets: p.img, scale: 0.9 * INV, duration: 70, yoyo: true });
+            this.playSound('impactSound', 0.5);
+            haptic('tap');
             return;
         }
 
@@ -750,9 +849,13 @@ export class GameScene extends Phaser.Scene {
         p.selected = true;
         p.slot = slot;
         this.flyToSlot(p, slot);
+        if (this.dragging) {
+            this.chain.push(p);
+            haptic('tap');
+        }
         if (this.tutorial && p === this.tutTarget) this.tutorialStep(this.tutStep + 1);
 
-        if (this.slots[0] && this.slots[1] && this.slots[2]) {
+        if (this.slots[0] && this.slots[1] && this.slots[2] && !this.dragging) {
             this.validating = true;
             this.time.delayedCall(260, () => this.validate());
         }
@@ -866,6 +969,8 @@ export class GameScene extends Phaser.Scene {
             this.finishTutorial();
             return;
         }
+        this.crackJunk();
+        if (this.energyOn) this.gainEnergy(this.combo >= 2 ? 0.3 : 0.2);
         this.newTarget();
         this.checkLevelUp();
     }
@@ -878,9 +983,126 @@ export class GameScene extends Phaser.Scene {
         this.combo = 0;
         this.streak = 0;
         this.addScore(-SCORING.failPenalty, this.targetX, this.eqY + this.slotSize * 0.6, 0xef4444);
+        if (!this.tutorial && settings.get('teachErrors')) this.explainMistake();
+        if (!this.tutorial && settings.get('junk')) this.time.delayedCall(350, () => this.dropJunk(2));
 
         for (let i = 0; i < 3; i++) this.deselect(i);
         this.time.delayedCall(250, () => { this.validating = false; });
+    }
+
+    // Shows what the wrong equation actually makes: "7 × 3 = 21 ≠ 24"
+    explainMistake() {
+        const [a, o, b] = this.slots;
+        if (!a || !o || !b) return;
+        const r = calc(a.value, o.value, b.value);
+        const shown = o.value === '-' ? '−' : o.value;
+        const made = r === null ? `${a.value} ${shown} ${b.value} ${t('notWhole')}` : `${a.value} ${shown} ${b.value} = ${r}`;
+        const y = this.uiHeight + 46;
+        const label = this.add.text(this.w / 2, y, r === null ? made : `${made}  ≠ ${this.target}`, {
+            fontFamily: 'Righteous', fontSize: '26px', color: '#ffb4b4', stroke: '#2a0a0a', strokeThickness: 6
+        }).setOrigin(0.5).setDepth(215).setScale(0.6);
+        this.tweens.add({ targets: label, scale: 1, duration: 200, ease: 'Back.easeOut' });
+        this.tweens.add({ targets: label, alpha: 0, y: y - 16, delay: 1500, duration: 300, onComplete: () => label.destroy() });
+    }
+
+    // ------------------------------------------------------------------ junk ("trambolhos")
+
+    dropJunk(n) {
+        if (this.gameOver) return;
+        for (let i = 0; i < n; i++) {
+            const x = R + 4 + Math.random() * (this.w - 2 * R - 8);
+            const p = this.createPiece({ type: 'junk', hp: 3 }, x, -R * 2 - i * DIAMETER);
+            this.Body.setVelocity(p.body, { x: 0, y: 6 });
+        }
+        this.playSound('impactSound', 0.6);
+    }
+
+    // Every correct equation cracks all junk; the third crack breaks it (small bonus)
+    crackJunk() {
+        for (const p of [...this.pieces]) {
+            if (p.type !== 'junk') continue;
+            p.hp--;
+            const { x, y } = p.body.position;
+            this.burst.setParticleTint(0x9a9aa8);
+            if (p.hp <= 0) {
+                this.burst.emitParticleAt(x, y, 16);
+                this.sparks.emitParticleAt(x, y, 6);
+                this.removePiece(p);
+                this.addScore(25, x, y, 0xc0c7d6);
+            } else {
+                this.burst.emitParticleAt(x, y, 6);
+                p.img.setTexture(pieceTextureKey(p));
+                this.tweens.add({ targets: p.img, scale: 1.12 * INV, duration: 80, yoyo: true });
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ energy bar (test option)
+
+    gainEnergy(n) {
+        if (this.chooser || this.gameOver) return;
+        this.energy = Math.min(1, this.energy + n);
+        this.updateEnergyHud();
+        if (this.energy >= 1) this.showChooser();
+    }
+
+    updateEnergyHud() {
+        const g = this.energyBar;
+        if (!g) return;
+        g.clear();
+        const x = this.w * 0.62;
+        const w = this.w - 24 - x;
+        const y = this.uiHeight - 11;
+        g.fillStyle(0x0b2a3a, 1);
+        g.fillRoundedRect(x, y, w, 5, 2.5);
+        if (this.energy > 0) {
+            g.fillStyle(this.energy >= 1 ? 0x7dd3fc : 0x22d3ee, 1);
+            g.fillRoundedRect(x, y, Math.max(5, w * this.energy), 5, 2.5);
+        }
+    }
+
+    // Full bar: pick one of four specials; it drops into the pile from the top
+    showChooser() {
+        const kinds = ['bomb', 'heat', 'recycle', 'hint'];
+        const size = 54;
+        const pw = kinds.length * (size + 10) + 16;
+        const ph = size + 46;
+        const x0 = this.w / 2 - pw / 2;
+        const y0 = this.uiHeight + 10;
+        const box = this.add.container(0, 0).setDepth(640);
+        const g = this.add.graphics();
+        g.fillStyle(0x000000, 0.4);
+        g.fillRoundedRect(x0 + 3, y0 + 5, pw, ph, 18);
+        g.fillStyle(0x0b2a3a, 0.97);
+        g.fillRoundedRect(x0, y0, pw, ph, 18);
+        g.lineStyle(3, 0x7dd3fc, 1);
+        g.strokeRoundedRect(x0, y0, pw, ph, 18);
+        const title = this.add.text(this.w / 2, y0 + 16, t('pickSpecial'), {
+            fontFamily: 'Righteous', fontSize: '14px', color: '#bae6fd'
+        }).setOrigin(0.5);
+        box.add([g, title]);
+        kinds.forEach((kind, i) => {
+            const icon = this.add.image(x0 + 16 + size / 2 + i * (size + 10), y0 + 30 + size / 2, `piece_special_${kind}`)
+                .setScale(size / TEX_PX).setInteractive({ useHandCursor: true });
+            icon.on('pointerdown', () => this.pickSpecial(kind));
+            this.tweens.add({ targets: icon, scale: (size / TEX_PX) * 1.08, duration: 500, yoyo: true, repeat: -1, delay: i * 90 });
+            box.add(icon);
+        });
+        box.setAlpha(0).setScale(0.9);
+        this.tweens.add({ targets: box, alpha: 1, scale: 1, duration: 200, ease: 'Back.easeOut' });
+        this.chooser = box;
+        this.playSound('bonusSound', 0.6);
+        haptic('combo');
+    }
+
+    pickSpecial(kind) {
+        if (!this.chooser || this.paused) return;
+        this.chooser.destroy();
+        this.chooser = null;
+        this.energy = 0;
+        this.updateEnergyHud();
+        this.playClick();
+        this.createPiece({ type: 'special', special: kind }, this.w / 2 + Phaser.Math.Between(-60, 60), -R * 2);
     }
 
     // ------------------------------------------------------------------ targets & solver
@@ -1675,7 +1897,7 @@ export class GameScene extends Phaser.Scene {
         g.clear();
         if (this.tutorial) return;
         const x = 24;
-        const w = this.w - 48;
+        const w = this.energyOn ? this.w * 0.62 - 32 : this.w - 48;
         const y = this.uiHeight - 11;
         g.fillStyle(0x2a1c52, 1);
         g.fillRoundedRect(x, y, w, 5, 2.5);
@@ -1757,7 +1979,7 @@ export class GameScene extends Phaser.Scene {
         this.showTutBubble(null);
 
         this.time.delayedCall(700, () => {
-            const m = modal(this, { depth: 600, height: 510, title: t('tutDoneTitle') });
+            const m = modal(this, { depth: 600, height: 550, title: t('tutDoneTitle') });
             const { panel } = m;
             let y = panel.y + 84;
             t('tutDone').forEach((line) => {
@@ -1774,7 +1996,8 @@ export class GameScene extends Phaser.Scene {
                 ['piece_special_hint', specials.hint],
                 ['piece_special_recycle', specials.recycle],
                 ['piece_special_heat', specials.heat],
-                ['piece_num_7', specials.ice, true]
+                ['piece_num_7', specials.ice, true],
+                ['piece_junk_3', specials.junk]
             ];
             const left = panel.x + 26;
             rows.forEach(([key, text, iced]) => {
@@ -1799,6 +2022,14 @@ export class GameScene extends Phaser.Scene {
         if (this.gameOver) return;
         this.gameOver = true;
         this.endReason = reason;
+        if (this.chooser) {
+            this.chooser.destroy();
+            this.chooser = null;
+        }
+        if (this.dragging) {
+            this.dragging = false;
+            this.chainGfx.clear();
+        }
         this.matter.world.pause();
         this.music.stop();
         haptic('gameOver');

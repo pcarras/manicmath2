@@ -191,7 +191,7 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         const first = !m;
         if (m) m.close();
         const ROW = 52;
-        m = modal(scene, { depth, height: 100 + ROW * 7 + 76, title: t('settings'), fade: first });
+        m = modal(scene, { depth, height: 100 + ROW * 8 + 76, title: t('settings'), fade: first });
         const { panel } = m;
         let y = panel.y + 96;
         ['music', 'sfx', 'vibration'].forEach((key) => {
@@ -226,6 +226,9 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
             settings.set('reduceMotion', !calm);
             render();
         });
+        y += ROW;
+        // Gameplay options being tested
+        toggleRow(scene, m, y, t('tests'), t('open'), true, () => openTests(scene, { depth: depth + 40 }));
         m.add(chunkyButton(scene, panel.cx, panel.y + panel.h - 42, t('close'), 0x6366f1, () => {
             m.close();
             if (settings.get('graphics') !== startGraphics) {
@@ -234,6 +237,39 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
             }
             if (onClose) onClose(lang() !== startLang);
         }, { width: 180, height: 50, fontSize: 22, depth: m.depth, enter: false }));
+    };
+    render();
+}
+
+// Gameplay options being tested with players (applied when the next game starts)
+export function openTests(scene, { depth = 760 } = {}) {
+    let m = null;
+    const render = () => {
+        const first = !m;
+        if (m) m.close();
+        const ROW = 54;
+        m = modal(scene, { depth, height: 96 + 44 + ROW * 4 + 76, title: t('testsTitle'), fade: first });
+        const { panel } = m;
+        m.add(scene.add.text(panel.cx, panel.y + 84, t('testsNote'), {
+            fontFamily: 'Roboto', fontSize: '13px', color: '#a5a8dd', align: 'center', wordWrap: { width: panel.w - 40 }
+        }).setOrigin(0.5).setDepth(m.depth));
+        let y = panel.y + 136;
+        const drag = settings.get('inputMode') === 'drag';
+        toggleRow(scene, m, y, t('inputMode'), drag ? t('drag') : t('tap'), true, () => {
+            settings.set('inputMode', drag ? 'tap' : 'drag');
+            render();
+        });
+        y += ROW;
+        [['teachErrors', 'teachErrors'], ['energy', 'energyBar'], ['junk', 'junkPieces']].forEach(([key, label]) => {
+            const on = !!settings.get(key);
+            toggleRow(scene, m, y, t(label), on ? t('on') : t('off'), on, () => {
+                settings.set(key, !on);
+                render();
+            });
+            y += ROW;
+        });
+        m.add(chunkyButton(scene, panel.cx, panel.y + panel.h - 42, t('close'), 0x6366f1, () => m.close(),
+            { width: 180, height: 50, fontSize: 22, depth: m.depth, enter: false }));
     };
     render();
 }
