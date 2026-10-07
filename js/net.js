@@ -15,7 +15,10 @@ async function post(body) {
             body: JSON.stringify(body)
         });
         const data = await r.json().catch(() => ({}));
-        return r.ok ? { ok: true, data } : { ok: false, status: r.status, error: data.error || (r.status === 503 ? 'soon' : 'offline') };
+        if (r.ok) return { ok: true, data };
+        // The host may replace a 404 body with its own page, so the status alone means "no such room"
+        const fallback = r.status === 404 ? 'no_room' : r.status === 503 ? 'soon' : 'offline';
+        return { ok: false, status: r.status, error: data.error || fallback };
     } catch {
         return { ok: false, error: 'offline' };
     }
