@@ -103,6 +103,17 @@ export class Sfx {
         this.tone(noteFreq(12), { at: 0.35, dur: 0.6, type: 'triangle', vol: 0.16 });
     }
 
+    // Tape slowing to a stop (slow-motion into a bonus round), or speeding back up (reverse)
+    tape(down, dur = 1.5) {
+        if (!this.on()) return;
+        const [a, b] = down ? [1, 0.12] : [0.12, 1];
+        [[196, 'sawtooth', 0.05], [294, 'triangle', 0.07], [392, 'triangle', 0.04]].forEach(([f, type, vol]) => {
+            this.tone(f * a, { dur, type, vol, attack: down ? 0.01 : dur * 0.6, to: f * b });
+        });
+        this.noiseBurst({ dur, vol: 0.05, type: 'lowpass', freq: down ? 2400 : 300, to: down ? 300 : 2400 });
+        if (down) this.tone(70, { at: dur * 0.85, dur: 0.35, type: 'sine', vol: 0.22, to: 40 });
+    }
+
     // Game-over score counter: short ticks whose pitch follows the progress (0..1)
     count(progress) {
         if (!this.on()) return;

@@ -196,10 +196,10 @@ export class DrillScene extends Phaser.Scene {
         }).setOrigin(0.5);
         box.add([bg, cup, ...steam, title, sub]);
         box.y = -h;
-        this.tweens.add({ targets: box, y: 0, duration: 420, ease: 'Bounce.easeOut' });
+        this.tweens.add({ targets: box, y: 0, duration: 700, ease: 'Bounce.easeOut' });
         this.sfx.rise(2);
-        this.time.delayedCall(1700, () => {
-            this.tweens.add({ targets: box, y: -h, duration: 320, ease: 'Cubic.easeIn', onComplete: () => { box.destroy(); done(); } });
+        this.time.delayedCall(3000, () => {
+            this.tweens.add({ targets: box, y: -h, duration: 500, ease: 'Cubic.easeIn', onComplete: () => { box.destroy(); done(); } });
         });
     }
 
@@ -296,13 +296,25 @@ export class DrillScene extends Phaser.Scene {
             this.started = true;
             this.sfx.rise(5);
         };
+        const btn = chunkyButton(this, w / 2, cy + ch - 40, t('gotIt'), 0x22c55e, start,
+            { width: Math.min(220, cw - 40), height: 52, fontSize: 22, depth: 610, delay: 300 });
+        box.add(btn);
         if (this.bonus) {
-            // Short break: the example plays once, then the round starts by itself
-            this.time.delayedCall(350 + demo.taps.length * 700 + 900, start);
-        } else {
-            const btn = chunkyButton(this, w / 2, cy + ch - 40, t('gotIt'), 0x22c55e, start,
-                { width: Math.min(220, cw - 40), height: 52, fontSize: 22, depth: 610, delay: 300 });
-            box.add(btn);
+            // Bonus: time to read (the example plays about three times), then the round starts by itself
+            let left = 10;
+            const count = this.add.text(w / 2, cy + ch + 18, t('startsIn', { n: left }), {
+                fontFamily: 'Righteous', fontSize: '15px', color: '#ffd9a8', stroke: '#1b0f2e', strokeThickness: 4
+            }).setOrigin(0.5);
+            box.add(count);
+            this.time.addEvent({
+                delay: 1000, repeat: left - 1, callback: () => {
+                    if (!alive) return;
+                    left--;
+                    count.setText(t('startsIn', { n: left }));
+                    if (left <= 3 && left > 0) this.sfx.count(1 - left / 4);
+                    if (left === 0) start();
+                }
+            });
         }
         box.setAlpha(0);
         this.tweens.add({ targets: box, alpha: 1, duration: 220 });
@@ -719,10 +731,13 @@ export class DrillScene extends Phaser.Scene {
         if (this.bonus) {
             this.floatText(this.w / 2, this.h * 0.4, `+${this.score}`, '#ffd23f', 40);
             this.time.delayedCall(700, () => this.floatText(this.w / 2, this.h * 0.4 + 50, t('backToGame'), '#ffffff', 24));
-            this.time.delayedCall(1600, () => {
-                const gs = this.scene.get('GameScene');
-                this.scene.stop();
-                if (gs && gs.bonusDone) gs.bonusDone(this.score);
+            this.time.delayedCall(1800, () => {
+                this.cameras.main.fadeOut(400, 0, 0, 0);
+                this.cameras.main.once('camerafadeoutcomplete', () => {
+                    const gs = this.scene.get('GameScene');
+                    this.scene.stop();
+                    if (gs && gs.bonusDone) gs.bonusDone(this.score);
+                });
             });
             return;
         }

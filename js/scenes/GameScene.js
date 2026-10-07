@@ -462,6 +462,7 @@ export class GameScene extends Phaser.Scene {
 
     update(time, delta) {
         if (this.paused) return;
+        if (this.replay) delta = this.stepReplay(delta);
 
         // Sync sprites to bodies. Rotation is ignored on purpose: labels always stay upright (no 6/9 confusion).
         const pieces = this.pieces;
@@ -816,7 +817,7 @@ export class GameScene extends Phaser.Scene {
     // ------------------------------------------------------------------ input & selection
 
     onPointerDown(pointer, over) {
-        if (!this.gameStarted || this.gameOver || this.validating || this.paused) return;
+        if (!this.gameStarted || this.gameOver || this.validating || this.paused || this.replay) return;
         // Buttons (pause, the energy chooser) handle their own taps
         if (over && over.length) return;
         // world coordinates: the camera is zoomed by RES (see display.js)
@@ -1650,30 +1651,122 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    // Bonus round: this scene pauses (physics, timers, tweens) and a drill runs on top of it
+    // Bonus round: the game slows down like a slow-motion replay until it stops, then this scene
+    // pauses (physics, timers, tweens) and a drill runs on top of it. Coming back plays it in reverse.
     startBonus() {
-        if (this.gameOver || this.paused || this.inBonus) return;
+        if (this.gameOver || this.paused || this.inBonus || this.replay) return;
         this.inBonus = true;
         for (let i = 0; i < 3; i++) this.deselect(i);
         this.sfx.stopTickTock();
-        this.sfx.pauseLoops();
         this.music.hold(true);   // the mini game brings its own music
-        const d = Phaser.Utils.Array.GetRandom(DRILLS);
-        this.scene.pause();
-        this.scene.launch('DrillScene', { id: d.id, bonus: true });
+        this.sfx.tape(true, 1.6);
+        this.slowMo('in', () => {
+            this.sfx.pauseLoops();
+            const d = Phaser.Utils.Array.GetRandom(DRILLS);
+            this.scene.pause();
+            this.scene.launch('DrillScene', { id: d.id, bonus: true });
+        });
     }
 
     // Called by DrillScene when the bonus round ends
     bonusDone(points) {
-        this.inBonus = false;
         this.scene.resume();
-        this.sfx.resumeLoops();
-        if (this.timerRemaining <= 0) this.music.hold(false);
-        if (this.timerRemaining > 0) this.sfx.startTickTock();
-        if (points > 0) {
-            this.addScore(points, this.w / 2, this.h * 0.42, 0xffd23f);
-            this.earnBeans(Math.max(1, Math.round(points / 300)), this.w / 2, this.h * 0.42 + 40);
+        this.sfx.tape(false, 1.4);
+        this.slowMo('out', () => {
+            this.inBonus = false;
+            this.sfx.resumeLoops();
+            if (this.timerRemaining <= 0) this.music.hold(false);
+            if (this.timerRemaining > 0) this.sfx.startTickTock();
+            if (points > 0) {
+                this.addScore(points, this.w / 2, this.h * 0.42, 0xffd23f);
+                this.earnBeans(Math.max(1, Math.round(points / 300)), this.w / 2, this.h * 0.42 + 40);
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ slow motion
+
+    // 'in': speed eases from 1 to almost 0 while letterbox bars, a sepia wash and a REPLAY tag appear.
+    // 'out': the same effect in reverse. Driven by real time in update(), so it is not slowed itself.
+    slowMo(dir, done) {
+        const { w, h } = this;
+        let r = this.replay;
+        if (!r) {
+            const barH = Math.round(h * 0.09);
+            const box = this.add.container(0, 0).setDepth(950);
+            const wash = this.add.rectangle(0, 0, w, h, 0x3b1e0e, 1).setOrigin(0).setAlpha(0);
+            const top = this.add.rectangle(0, 0, w, barH, 0x000000, 1).setOrigin(0, 1);
+            const bottom = this.add.rectangle(0, h, w, barH, 0x000000, 1).setOrigin(0, 0);
+            const rec = this.add.text(16, 0, '● REPLAY', {
+                fontFamily: 'Righteous', fontSize: '15px', color: '#ff4d4d'
+            }).setOrigin(0, 0.5);
+            const speed = this.add.text(w - 16, 0, '', {
+                fontFamily: 'Righteous', fontSize: '15px', color: '#ffffff'
+            }).setOrigin(1, 0.5);
+            const title = this.add.text(w / 2, h * 0.42, '', {
+                fontFamily: 'Righteous', fontSize: '34px', color: '#ffd23f', stroke: '#1b0f2e', strokeThickness: 7, align: 'center'
+            }).setOrigin(0.5).setAlpha(0);
+            box.add([wash, top, bottom, rec, speed, title]);
+            const cam = this.cameras.main;
+            const fx = cam.postFX ? cam.postFX.addColorMatrix() : null;
+            r = this.replay = { box, wash, top, bottom, rec, speed, title, barH, fx, k: 0 };
         }
+        Object.assign(r, { dir, t: 0, dur: dir === 'in' ? 1600 : 1400, hold: dir === 'in' ? 500 : 0, done });
+        r.title.setText(dir === 'in' ? t('slowMo') : t('backToGame'));
+    }
+
+    // Advances the effect by the real frame time; returns the slowed game time
+    stepReplay(real) {
+        const r = this.replay;
+        r.t += real;
+        const p = Phaser.Math.Clamp(r.t / r.dur, 0, 1);
+        const k = r.dir === 'in' ? Phaser.Math.Easing.Sine.InOut(p) : 1 - Phaser.Math.Easing.Sine.InOut(p);
+        r.k = k;
+        const speed = 1 - 0.97 * k;
+        this.matter.world.engine.timing.timeScale = speed;
+        this.tweens.timeScale = speed;
+        this.time.timeScale = speed;
+
+        const { h } = this;
+        r.top.y = r.barH * k;
+        r.bottom.y = h - r.barH * k;
+        r.rec.y = r.top.y - r.barH / 2;
+        r.rec.setAlpha(Math.floor(r.t / 400) % 2 ? 0.35 : 1);
+        r.speed.y = r.rec.y;
+        r.speed.setText(`×${speed.toFixed(2)}`);
+        r.wash.setAlpha(0.28 * k);
+        // Title shows up while time is almost still
+        const ta = r.dir === 'in' ? Phaser.Math.Clamp((p - 0.45) / 0.3, 0, 1) : Phaser.Math.Clamp(1 - p / 0.5, 0, 1);
+        r.title.setAlpha(ta).setScale(0.9 + 0.1 * ta);
+        if (r.fx) {
+            r.fx.reset();
+            r.fx.grayscale(0.8 * k);
+        }
+
+        if (this.gameOver) {
+            this.endReplay();
+            this.inBonus = false;
+            return real;
+        }
+        if (r.done && r.t >= r.dur + r.hold) {
+            const done = r.done;
+            r.done = null;
+            // 'in' stays on screen (frozen) under the drill until the way back
+            if (r.dir === 'out') this.endReplay();
+            done();
+        }
+        return real * speed;
+    }
+
+    endReplay() {
+        const r = this.replay;
+        if (!r) return;
+        this.replay = null;
+        this.matter.world.engine.timing.timeScale = 1;
+        this.tweens.timeScale = 1;
+        this.time.timeScale = 1;
+        if (r.fx) this.cameras.main.postFX.remove(r.fx);
+        r.box.destroy();
     }
 
     // Coffee beans are banked straight away (quitting mid-game keeps them)
@@ -1697,7 +1790,7 @@ export class GameScene extends Phaser.Scene {
     // ------------------------------------------------------------------ pause
 
     pauseGame() {
-        if (this.paused || this.gameOver || !this.gameStarted) return;
+        if (this.paused || this.gameOver || !this.gameStarted || this.replay) return;
         this.paused = true;
         this.matter.world.pause();
         // Pause only the running tweens: in Phaser 3.60 tweens.pauseAll() would also freeze the
