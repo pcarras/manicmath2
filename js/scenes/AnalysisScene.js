@@ -5,6 +5,7 @@ import { chunkyButton, modal } from '../ui.js';
 import { RES, view, setupCamera } from '../display.js';
 import { analysis, tipFor, resetAnalysis } from '../analysis.js';
 import { DRILLS, drillText } from '../drills.js';
+import { preloadMascot, addMascot } from '../mascot.js';
 
 const OP_COLOR = { '+': 0x8b5cf6, '-': 0x10b981, '×': 0xf97316, '÷': 0x3b82f6 };
 const pct = (r) => (r === null || r === undefined ? '—' : `${Math.round(r * 100)}%`);
@@ -14,6 +15,10 @@ const pct = (r) => (r === null || r === undefined ? '—' : `${Math.round(r * 10
 export class AnalysisScene extends Phaser.Scene {
     constructor() {
         super({ key: 'AnalysisScene' });
+    }
+
+    preload() {
+        preloadMascot(this, ['think']);
     }
 
     create() {
@@ -146,12 +151,13 @@ export class AnalysisScene extends Phaser.Scene {
 
             // Tip
             const tip = tipFor(a);
-            const y5 = card(96, 0xffd23f);
-            title(`☕ ${t('analysisTip')}`, y5 + 22);
+            const y5 = card(110, 0xffd23f);
+            title(t('analysisTip'), y5 + 22);
             this.add.text(30, y5 + 42, tip, {
-                fontFamily: 'Roboto', fontSize: '14px', color: '#ffffff', wordWrap: { width: cw - 36 }, lineSpacing: 3
+                fontFamily: 'Roboto', fontSize: '14px', color: '#ffffff', wordWrap: { width: cw - 110 }, lineSpacing: 3
             });
-            y += 108;
+            addMascot(this, w - 62, y5 + 104, 'think', { height: 92, depth: 5 });
+            y += 122;
 
             chunkyButton(this, w / 2, y + 26, t('analysisReset'), 0x4b4566, () => this.confirmReset(),
                 { width: 200, height: 40, fontSize: 15, enter: false });

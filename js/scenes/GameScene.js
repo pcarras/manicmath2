@@ -13,6 +13,7 @@ import { stats, daily, todayKey, modeBest } from '../stats.js';
 import { report, achievementText, drawMedal } from '../achievements.js';
 import { MusicDirector } from '../music.js';
 import { logEquation } from '../analysis.js';
+import { preloadMascot, addMascot, bob } from '../mascot.js';
 import { track, addBeans, completeDaily, missionText, currentItem } from '../progress.js';
 import { submitScore, shareText, share } from '../ranking.js';
 
@@ -131,6 +132,7 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         preloadBackdrop(this, currentItem('scene'));
+        preloadMascot(this);
         this.load.audio('explosionSound', 'sounds/explosion1.mp3');
         this.load.audio('clickbutton', 'sounds/clickbutton.mp3');
         this.load.audio('timeSound', 'sounds/snd_time.mp3');
@@ -610,7 +612,7 @@ export class GameScene extends Phaser.Scene {
         if (this.multi) this.spawnDelay = this.levelSpawnDelay(this.mpStage());
         if (this.link) {
             this.snapAcc += delta;
-            if (this.snapAcc >= 66) {
+            if (this.snapAcc >= 32) {
                 this.snapAcc = 0;
                 this.sendSnapshot();
             }
@@ -1120,6 +1122,7 @@ export class GameScene extends Phaser.Scene {
             this.Body.setVelocity(p.body, { x: 0, y: 6 });
             this.Body.setAngularVelocity(p.body, Phaser.Math.FloatBetween(-0.05, 0.05));
         }
+        this.fxSend({ fx: 'jdrop' });
         this.time.delayedCall(450, () => this.sfx.clank(0.7));
     }
 
@@ -1343,22 +1346,27 @@ export class GameScene extends Phaser.Scene {
         else if (p.special === 'heat') this.heatWave(x, y);
     }
 
-    explode(x, y) {
-        const radius = R * 3.2 * 1.3;   // +30% reach
-        const pushRadius = radius * 2;
-        if (this.link) this.link.send({ fx: 'boom', x: Math.round(x), y: Math.round(y) });
+    // Sound, shake, sparks and shock wave of a bomb (also played on the other phone in TEAM mode)
+    boomFx(x, y) {
+        const radius = R * 3.2 * 1.3;
         this.playSound('explosionSound', 0.9);
         this.sfx.duck(0.35, 600);
         this.shake(320, 0.02);
         haptic('bomb');
-        this.hitStop(90);
         this.sparks.emitParticleAt(x, y, 30);
-
         const wave = this.add.image(x, y, 'ring').setTint(0xffaa33).setDepth(190).setScale(0.4 * INV);
         this.tweens.add({
             targets: wave, scale: (radius * 2) / TEX_PX * 1.2, alpha: 0, duration: 380, ease: 'Cubic.easeOut',
             onComplete: () => wave.destroy()
         });
+    }
+
+    explode(x, y) {
+        const radius = R * 3.2 * 1.3;   // +30% reach
+        const pushRadius = radius * 2;
+        this.fxSend({ fx: 'boom', x: Math.round(x), y: Math.round(y) });
+        this.boomFx(x, y);
+        this.hitStop(90);
 
         let destroyed = 0;
         for (const q of [...this.pieces]) {
@@ -1393,15 +1401,30 @@ export class GameScene extends Phaser.Scene {
         this.ensureSolvable();
     }
 
+    // TEAM: the host tells the other phone about every effect, so both screens show the same thing
+    fxSend(msg) {
+        if (this.link) this.link.send(msg);
+    }
+
     // Branching lightning from the recycle piece to several pieces and to the target, which
     // scrambles and changes. Bolts flicker (re-generated a few times) before the hits land.
     recycle(x, y) {
-        this.playSound('sparksSound', 0.85);
         const pool = Phaser.Utils.Array.Shuffle(this.pieces.filter((q) => !q.selected && !q.lit));
         const hits = pool.slice(0, Math.min(pool.length, 5 + Math.floor(Math.random() * 3)));
-        const ends = hits.map((q) => ({ x: q.body.position.x, y: q.body.position.y }));
-        ends.push({ x: this.targetX, y: this.eqY });
+        const ends = hits.map((q) => ({ x: Math.round(q.body.position.x), y: Math.round(q.body.position.y) }));
+        ends.push({ x: Math.round(this.targetX), y: Math.round(this.eqY) });
+        this.fxSend({ fx: 'recycle', x: Math.round(x), y: Math.round(y), ends });
+        this.recycleFx(x, y, ends, true);
+        // The pieces hit are removed a beat after the strike, as the bolts land
+        hits.forEach((q, i) => this.time.delayedCall(260 + 90 + i * 45, () => this.removePiece(q)));
+        this.time.delayedCall(260 + 90, () => this.scrambleTarget());
+    }
 
+    // The picture of the recycle: charge, flickering bolts, a ring on each hit, afterglow.
+    // Runs on this phone and, in TEAM mode, on the other phone too.
+    recycleFx(x, y, ends, host = false) {
+        if (!host) this.time.delayedCall(260 + 90, () => this.scrambleFx());
+        this.playSound('sparksSound', 0.85);
         // 1) Charge: a crackling orb gathers at the recycle piece
         const orb = this.add.image(x, y, 'hintGlow').setTint(0x7dd3fc).setBlendMode(Phaser.BlendModes.ADD)
             .setDepth(999).setDisplaySize(30, 30);
@@ -1429,20 +1452,15 @@ export class GameScene extends Phaser.Scene {
             for (let k = 0; k * 65 < STRIKE_MS; k++) {
                 this.time.delayedCall(k * 65, () => strike(1 - (k * 65) / STRIKE_MS * 0.35));
             }
-            // Hits land a beat after the first strike, each with its own burst
-            hits.forEach((q, i) => this.time.delayedCall(90 + i * 45, () => {
-                if (!q.alive) return;
-                const qx = q.body.position.x;
-                const qy = q.body.position.y;
-                this.sparks.emitParticleAt(qx, qy, 14);
+            // Hits land a beat after the first strike, each with its own burst (the last end is the target)
+            ends.slice(0, -1).forEach((e, i) => this.time.delayedCall(90 + i * 45, () => {
+                this.sparks.emitParticleAt(e.x, e.y, 14);
                 this.tintBurst(0x7dd3fc);
-                this.burst.emitParticleAt(qx, qy, 12);
-                const ring = this.add.image(qx, qy, 'ring').setTint(0x7dd3fc).setBlendMode(Phaser.BlendModes.ADD)
+                this.burst.emitParticleAt(e.x, e.y, 12);
+                const ring = this.add.image(e.x, e.y, 'ring').setTint(0x7dd3fc).setBlendMode(Phaser.BlendModes.ADD)
                     .setDepth(998).setScale(0.6 * INV);
                 this.tweens.add({ targets: ring, scale: 1.6 * INV, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
-                this.removePiece(q);
             }));
-            this.time.delayedCall(90, () => this.scrambleTarget());
             // 3) Afterglow: the last bolts fade out slowly
             this.tweens.add({
                 targets: [gfx, orb], alpha: 0, delay: STRIKE_MS, duration: 450,
@@ -1453,17 +1471,21 @@ export class GameScene extends Phaser.Scene {
 
     // Target flickers through random numbers like a slot machine, then lands on a new one
     scrambleTarget() {
+        this.scrambleFx();
+        this.time.delayedCall(800, () => {
+            if (this.gameOver) return;
+            this.newTarget();
+            this.ensureSolvable();
+        });
+    }
+
+    scrambleFx() {
         const txt = this.targetText;
         this.tweens.killTweensOf(txt);
         txt.setScale(1.15);
         this.time.addEvent({
             delay: 50, repeat: 15,
             callback: () => { if (txt.active) txt.setText(String(1 + Math.floor(Math.random() * 45))); }
-        });
-        this.time.delayedCall(800, () => {
-            if (this.gameOver) return;
-            this.newTarget();
-            this.ensureSolvable();
         });
     }
 
@@ -1519,6 +1541,14 @@ export class GameScene extends Phaser.Scene {
     // Bomb fuse: sparks fly from the wick, the bomb flashes faster and faster, hisses, then blows
     lightFuse(p, ms) {
         p.lit = true;
+        this.fxSend({ fx: 'fuse', id: p.id, ms });
+        this.fuseVisual(p, ms);
+        p.fuseTimer = this.time.delayedCall(ms, () => this.detonate(p));
+    }
+
+    // Sparks, sound and blinking of a lit bomb. `p` is a piece, or on the other phone a sprite entry
+    // ({ img, alive }); the pieces of effect it creates are kept on it so clearFuse() can end them.
+    fuseVisual(p, ms) {
         this.tweens.killTweensOf(p.img);
         p.img.setScale(INV);
         p.fuseFx = this.add.particles(0, 0, 'spark', {
@@ -1542,7 +1572,6 @@ export class GameScene extends Phaser.Scene {
             p.fuseBlink = this.time.delayedCall(Math.max(60, left * 0.22), blink);
         };
         blink();
-        p.fuseTimer = this.time.delayedCall(ms, () => this.detonate(p));
     }
 
     clearFuse(p) {
@@ -1567,6 +1596,7 @@ export class GameScene extends Phaser.Scene {
         if (!p.alive) return;
         p.hp -= n;
         const { x, y } = p.body.position;
+        this.fxSend({ fx: 'jdmg', x: Math.round(x), y: Math.round(y), hp: p.hp });
         this.sparks.emitParticleAt(x, y, 6);
         if (p.hp <= 0) {
             this.shards.emitParticleAt(x, y, 16);
@@ -1585,6 +1615,17 @@ export class GameScene extends Phaser.Scene {
     // Heat wave: hot rings expand from the piece; when the front reaches a frozen piece its ice
     // melts in a puff of steam. The ice grows back slowly after HEAT_THAW_MS.
     heatWave(x, y) {
+        const { reach, travel } = this.heatFx(x, y);
+        this.fxSend({ fx: 'heat', x: Math.round(x), y: Math.round(y) });
+        for (const p of this.pieces) {
+            if (!p.ice) continue;
+            const d = Phaser.Math.Distance.Between(x, y, p.body.position.x, p.body.position.y);
+            this.time.delayedCall((d / reach) * travel, () => this.thaw(p));
+        }
+    }
+
+    // The picture of a heat wave: sound, rings, warm air, sparks. Returns how far and how long it travels.
+    heatFx(x, y) {
         this.sfx.heat();
         this.playSound('sparksSound', 0.3);
         const reach = Math.hypot(Math.max(x, this.w - x), Math.max(y, this.h - y)) + R;
@@ -1606,12 +1647,13 @@ export class GameScene extends Phaser.Scene {
         this.tintBurst(0xff8a1f);
         this.burst.emitParticleAt(x, y, 20);
         this.sparks.emitParticleAt(x, y, 14);
+        return { reach, travel };
+    }
 
-        for (const p of this.pieces) {
-            if (!p.ice) continue;
-            const d = Phaser.Math.Distance.Between(x, y, p.body.position.x, p.body.position.y);
-            this.time.delayedCall((d / reach) * travel, () => this.thaw(p));
-        }
+    // Steam puff and a little pulse where a frozen piece melts (the ice itself fades in the board stream)
+    thawFx(x, y, img) {
+        this.steamFx.emitParticleAt(x, y - R * 0.3, 7);
+        this.tweens.add({ targets: img, scale: 1.12 * INV, duration: 90, yoyo: true });
     }
 
     thaw(p) {
@@ -1619,8 +1661,7 @@ export class GameScene extends Phaser.Scene {
         const ice = p.ice;
         this.tweens.killTweensOf(ice);
         const { x, y } = p.body.position;
-        this.steamFx.emitParticleAt(x, y - R * 0.3, 7);
-        this.tweens.add({ targets: p.img, scale: 1.12 * INV, duration: 90, yoyo: true });
+        this.thawFx(x, y, p.img);
         this.tweens.add({ targets: ice, alpha: 0, duration: 300, ease: 'Cubic.easeOut' });
         this.time.delayedCall(HEAT_THAW_MS, () => {
             if (!p.alive || !p.ice) return;
@@ -2046,6 +2087,7 @@ export class GameScene extends Phaser.Scene {
         const { panel, depth } = m;
         const D = (o) => m.add(o.setDepth(depth));
         const mate = this.mateName();
+        m.add(addMascot(this, panel.x + panel.w - 40, panel.y + 24, outcome === 'lost' ? 'sad' : 'cheer', { height: 76, depth: depth + 1 }));
         const title = outcome === 'team' ? t('teamOver') : outcome === 'won' ? t('youWon') : t('youLost');
         D(this.add.text(panel.cx, panel.y + 46, title, {
             fontFamily: 'Righteous', fontSize: '34px', color: outcome === 'lost' ? '#f87171' : '#ffd23f',
@@ -2096,21 +2138,24 @@ export class GameScene extends Phaser.Scene {
     // Everything the other phone needs to draw the board, ~15 times a second
     sendSnapshot() {
         const flat = [];
-        const keys = {};
+        let fresh = null;
         for (const p of this.pieces) {
             const key = p.img.texture.key;
             let k = this.keyIdx.get(key);
             if (k === undefined) {
                 k = this.keyIdx.size;
                 this.keyIdx.set(key, k);
+                (fresh = fresh || {})[k] = key;
             }
-            keys[k] = key;
             const pos = p.body.position;
-            flat.push(p.id, Math.round(pos.x), Math.round(pos.y), Math.round(p.img.rotation * 100), k,
+            flat.push(p.id, Math.round(pos.x * 2) / 2, Math.round(pos.y * 2) / 2,
+                p.type === 'junk' ? Math.round(p.body.angle * 100) : 0, k,
                 p.ice ? Math.round(p.ice.alpha * 100) : 0, p.selected ? 1 : p.gsel ? 2 : 0);
         }
-        this.link.send({
-            s: flat, k: keys, t: this.target,
+        // New texture names go on the reliable channel (the board stream may lose frames)
+        if (fresh) this.link.send({ keys: fresh });
+        this.link.sendFast({
+            ts: Math.round(performance.now()), s: flat, t: this.target,
             sc: [this.score, this.mate.score], so: [this.solved - this.mate.solved, this.mate.solved],
             gs: this.guestSlots.map((q) => (q ? q.id : -1)), lv: this.level,
             tm: Math.max(0, Math.ceil(this.timerRemaining / 1000)), hn: Math.max(0, Math.ceil(this.hintRemaining / 1000)),
@@ -2225,6 +2270,8 @@ export class GameScene extends Phaser.Scene {
         const m = modal(this, { depth: 700, height: 400, title: t('paused') });
         this.pauseUI = m;
         const { panel } = m;
+        // Bica naps on top of the pause panel
+        m.add(addMascot(this, panel.x + panel.w - 46, panel.y + 18, 'sleep', { height: 74, depth: m.depth + 1 }));
         const bw = Math.min(240, panel.w - 48);
         const opts = { width: bw, height: 56, fontSize: 24, depth: m.depth, enter: false };
         // Resume first and biggest: it is what players want most of the time
@@ -2377,13 +2424,18 @@ export class GameScene extends Phaser.Scene {
     crackIce(p) {
         const ice = p.ice;
         this.tweens.killTweensOf(ice);
+        this.fxSend({ fx: 'ice', x: Math.round(p.img.x), y: Math.round(p.img.y) });
+        this.crackIceFx(p.img.x, p.img.y);
+        this.tweens.add({ targets: ice, alpha: 0.15, duration: 120, ease: 'Cubic.easeOut' });
+        this.tweens.add({ targets: ice, alpha: 0.95, duration: 900, delay: 820, ease: 'Sine.easeIn' });
+    }
+
+    crackIceFx(x, y) {
         this.tintBurst(0xbfe9ff);
-        this.burst.emitParticleAt(p.img.x, p.img.y, 8);
+        this.burst.emitParticleAt(x, y, 8);
         if (settings.get('sfx') && this.cache.audio.exists('clickbutton')) {
             this.sound.play('clickbutton', { volume: 0.4, detune: 900 });
         }
-        this.tweens.add({ targets: ice, alpha: 0.15, duration: 120, ease: 'Cubic.easeOut' });
-        this.tweens.add({ targets: ice, alpha: 0.95, duration: 900, delay: 820, ease: 'Sine.easeIn' });
     }
 
     // ------------------------------------------------------------------ achievements
@@ -2650,7 +2702,15 @@ export class GameScene extends Phaser.Scene {
                 this.tutPieces.push(this.createPiece({ ...data, noIce: true }, Math.round(fx * this.w), -R * 2));
             });
         });
-        this.time.delayedCall(1700, () => this.tutorialStep(0));
+        // Bica explains, pointing at the pieces
+        this.tutBica = addMascot(this, 58, this.uiHeight + 150, 'happy', { height: 92, depth: 172, accessory: 'none' });
+        this.tutBica.setAlpha(0);
+        this.tweens.add({ targets: this.tutBica, alpha: 1, y: this.uiHeight + 140, duration: 400, ease: 'Back.easeOut' });
+        this.showTutBubble(t('tutHello'));
+        this.time.delayedCall(2600, () => {
+            if (this.tutBica && this.tutBica.body) this.tutBica.body.setTexture('bica_point');
+            this.tutorialStep(0);
+        });
     }
 
     tutorialStep(i) {
@@ -2673,13 +2733,15 @@ export class GameScene extends Phaser.Scene {
         if (!text) return;
 
         const y = this.uiHeight + 80;
-        const label = this.add.text(this.w / 2, y, text, {
-            fontFamily: 'Righteous', fontSize: '24px', color: '#ffffff',
-            stroke: '#1b0f2e', strokeThickness: 6
+        // With Bica on the left the bubble moves right to make room
+        const cx = this.tutBica ? this.w / 2 + 44 : this.w / 2;
+        const label = this.add.text(cx, y, text, {
+            fontFamily: 'Righteous', fontSize: this.tutBica ? '20px' : '24px', color: '#ffffff',
+            stroke: '#1b0f2e', strokeThickness: 6, align: 'center', wordWrap: { width: this.w - 140 }
         }).setOrigin(0.5).setDepth(171);
-        const bw = Math.min(this.w - 32, label.width + 48);
-        const bh = 58;
-        const x = this.w / 2 - bw / 2;
+        const bw = Math.min(this.tutBica ? this.w - 112 : this.w - 32, label.width + 40);
+        const bh = Math.max(58, label.height + 22);
+        const x = cx - bw / 2;
         const g = this.add.graphics().setDepth(170);
         g.fillStyle(0x000000, 0.35);
         g.fillRoundedRect(x + 3, y - bh / 2 + 5, bw, bh, 18);
@@ -2699,6 +2761,10 @@ export class GameScene extends Phaser.Scene {
 
     finishTutorial() {
         settings.set('tutorialDone', true);
+        if (this.tutBica && this.tutBica.body) {
+            this.tutBica.body.setTexture('bica_cheer');
+            this.tweens.add({ targets: this.tutBica, y: this.tutBica.y - 16, duration: 180, yoyo: true, repeat: 2 });
+        }
         this.tutTarget = null;
         this.hintPieces = [];
         this.showTutBubble(null);
@@ -2808,6 +2874,10 @@ export class GameScene extends Phaser.Scene {
         const extra = this.daily ? 118 : this.rankBoard ? 96 : 30;
         const m = modal(this, { depth: 500, height: 440 + extra });
         const { panel } = m;
+        // Bica reacts: amazed on a record, happy after a good game, sad when it went badly
+        const pose = result.isRecord ? 'wow' : this.score >= 300 ? 'cheer' : 'sad';
+        const bica = m.add(addMascot(this, panel.x + panel.w - 40, panel.y + 26, pose, { height: 84, depth: 520 }));
+        bob(this, bica, 3);
 
         const title = m.add(this.add.text(panel.cx, panel.y + 50, this.endReason === 'time' ? t('timeUp') : this.endReason === 'zen' ? t('zen') : t('gameOver'), {
             fontFamily: 'Righteous', fontSize: '42px', color: '#ffffff',

@@ -3,6 +3,19 @@
 // with all its network candidates, so a slow poll is enough. Public STUN servers help phones
 // behind home routers find each other; nothing of the game goes through a server.
 const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+
+// STUN plus, when configured on the server (api/turn.js), a TURN relay for phones that cannot
+// reach each other directly
+async function iceServers() {
+    try {
+        const r = await fetch('api/turn', { cache: 'no-store' });
+        if (r.ok) {
+            const d = await r.json();
+            if (Array.isArray(d.iceServers) && d.iceServers.length) return d.iceServers;
+        }
+    } catch { /* offline: STUN only */ }
+    return ICE;
+}
 const GATHER_MS = 2500;
 
 // Waits until the local description has its candidates (or a short timeout)
@@ -25,24 +38,39 @@ export class Link {
         this.closeListeners = new Set();
         this.open = false;
         this.closed = false;
-        this.pc = new RTCPeerConnection({ iceServers: ICE });
+        this.ready = new Promise((resolve) => { this.resolveReady = resolve; });
+        this.pending = [];
+        this.offSignal = room.onEvent((ev) => {
+            if (this.pc) this.onSignal(ev);
+            else this.pending.push(ev);
+        });
+        this.start();
+    }
+
+    async start() {
+        this.pc = new RTCPeerConnection({ iceServers: await iceServers() });
+        if (this.closed) return;
         this.pc.addEventListener('connectionstatechange', () => {
             const s = this.pc.connectionState;
             if ((s === 'failed' || s === 'closed' || s === 'disconnected') && this.open) this.lost();
         });
-        this.ready = new Promise((resolve) => { this.resolveReady = resolve; });
-        this.offSignal = room.onEvent((ev) => this.onSignal(ev));
-        if (host) {
+        if (this.host) {
+            // Events (reliable and in order) and the board stream (a late frame is useless, so it is
+            // never retransmitted and never makes the next ones wait)
             this.attach(this.pc.createDataChannel('game', { ordered: true }));
+            this.attach(this.pc.createDataChannel('snap', { ordered: false, maxRetransmits: 0 }));
             this.makeOffer();
         } else {
             this.pc.addEventListener('datachannel', (e) => this.attach(e.channel));
         }
+        this.pending.splice(0).forEach((ev) => this.onSignal(ev));
     }
 
     attach(dc) {
-        this.dc = dc;
+        if (dc.label === 'snap') this.fast = dc;
+        else this.dc = dc;
         dc.addEventListener('open', () => {
+            if (dc.label === 'snap') return;
             this.open = true;
             this.resolveReady(true);
         });
@@ -84,6 +112,12 @@ export class Link {
         if (this.open && this.dc && this.dc.readyState === 'open') this.dc.send(JSON.stringify(msg));
     }
 
+    // Board stream: the fast channel when it is up, else the normal one
+    sendFast(msg) {
+        const ch = this.fast && this.fast.readyState === 'open' ? this.fast : this.dc;
+        if (this.open && ch && ch.readyState === 'open' && ch.bufferedAmount < 64000) ch.send(JSON.stringify(msg));
+    }
+
     onMessage(fn) {
         this.listeners.add(fn);
         return () => this.listeners.delete(fn);
@@ -106,6 +140,6 @@ export class Link {
         this.listeners.clear();
         this.closeListeners.clear();
         this.closed = true;
-        try { this.pc.close(); } catch { /* already closed */ }
+        try { if (this.pc) this.pc.close(); } catch { /* already closed */ }
     }
 }

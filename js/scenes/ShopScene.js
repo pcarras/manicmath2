@@ -9,10 +9,11 @@ import {
     beans, catalog, ownedItems, currentItem, buyItem, equipItem, dailyDeals,
     spares, buySpare, SPARE_PRICE, SPARE_MAX, beansLabel } from '../progress.js';
 import { haptic } from '../settings.js';
+import { preloadMascot, addMascot } from '../mascot.js';
 import { STICKERS, ownedStickers } from '../album.js';
 
 const SAMPLE = ['num_3', 'op_plus', 'num_7', 'op_times', 'special_bomb'];
-const TABS = ['deals', 'theme', 'scene', 'pop', 'extra'];
+const TABS = ['deals', 'theme', 'scene', 'pop', 'acc', 'extra'];
 const CARD_H = 104;
 
 // Cosmetics bought with coffee beans: piece themes, game scenes, pop effects, spare coffee,
@@ -28,6 +29,7 @@ export class ShopScene extends Phaser.Scene {
 
     preload() {
         catalog('scene').forEach((sc) => preloadBackdrop(this, sc.id));
+        preloadMascot(this, ['happy']);
     }
 
     create() {
@@ -286,6 +288,9 @@ export class ShopScene extends Phaser.Scene {
             const puff = () => em.emitParticleAt(x, midY, 10);
             puff();
             add(this.time.addEvent({ delay: 1100, loop: true, callback: puff }));
+        } else if (row.kind === 'acc') {
+            // Bica wearing it
+            add(addMascot(this, left + 34, y + cardH - 4, 'happy', { height: 62, accessory: row.item.id, depth: 1 }));
         } else if (row.kind === 'spare') {
             add(this.add.text(left, midY + 2, `☕ ${t('spareOwned', { n: spares(), max: SPARE_MAX })}`, {
                 fontFamily: 'Righteous', fontSize: '15px', color: '#ffd9a8'

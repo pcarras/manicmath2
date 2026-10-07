@@ -2,10 +2,11 @@
 import { createStarfield } from '../starfield.js';
 import { installMode, install, onInstallChange, safeAreaTop } from '../pwa.js';
 import { t } from '../i18n.js';
-import { isDebug, toggleDebug, settings } from '../settings.js';
+import { isDebug, toggleDebug, settings, haptic } from '../settings.js';
 import { stats, daily } from '../stats.js';
 import { chunkyButton, roundButton, openSettings, modal } from '../ui.js';
 import { view, setupCamera, PHONE } from '../display.js';
+import { preloadMascot, addMascot, bob, say } from '../mascot.js';
 import { beans, onProgressChange, streakInfo, missions, missionText, beansLabel } from '../progress.js';
 import { syncBests } from '../ranking.js';
 import { ensureTextures } from '../textures.js';
@@ -14,6 +15,10 @@ import { createTitle, createPieceRain } from '../title.js';
 export class MenuScene extends Phaser.Scene {
     constructor() {
         super({ key: 'MenuScene' });
+    }
+
+    preload() {
+        preloadMascot(this);
     }
 
     create() {
@@ -174,6 +179,20 @@ export class MenuScene extends Phaser.Scene {
             offBeans();
             clearTimeout(resizeTimer);
             this.scale.off('resize', onResize);
+        });
+
+        // Bica waves from the corner (wearing the accessory from the shop); a tap gets a tip
+        const bica = addMascot(this, 52, h - 44, 'happy', { height: 86, depth: 15 });
+        if (!calm) bob(this, bica, 3);
+        bica.setSize(80, 86).setInteractive({ useHandCursor: true });
+        bica.input.hitArea.setTo(-40, -86, 80, 86);
+        let bubble = null;
+        bica.on('pointerdown', () => {
+            haptic('tap');
+            if (bubble) bubble.destroy();
+            const tips = t('bicaTips');
+            bubble = say(this, 96, h - 96, tips[Math.floor(Math.random() * tips.length)], { width: Math.min(240, w - 110) });
+            this.time.delayedCall(3200, () => { if (bubble) { bubble.destroy(); bubble = null; } });
         });
 
         // Version + studio. 5 quick taps toggle debug mode.

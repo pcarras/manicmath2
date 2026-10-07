@@ -22,11 +22,15 @@ export class GuestScene extends GameScene {
         // The host-only code paths in GameScene look at this.link: keep the link under another name
         this.peer = this.link;
         this.link = null;
-        this.sprites = new Map();     // piece id -> { img, ice, tx, ty, rot, sel, key }
+        this.sprites = new Map();     // piece id -> { img, ice, key, alive }
+        this.snaps = [];              // received board frames, oldest first
         this.keys = {};
         this.mySlots = [-1, -1, -1];
         this.slotImgs = [null, null, null];
         this.hintIds = [];
+        this.clock = undefined;
+        this.timerOn = false;
+        this.hintOn = false;
     }
 
     create() {
@@ -63,48 +67,30 @@ export class GuestScene extends GameScene {
     // ------------------------------------------------------------------ from the host
 
     onHost(msg) {
-        if (msg.s) this.applySnapshot(msg);
+        if (msg.keys) Object.assign(this.keys, msg.keys);
+        else if (msg.s) this.queueSnapshot(msg);
         else if (msg.fx) this.playFx(msg);
         else if (msg.over && !this.gameOver) this.endGame(msg.reason === 'board' ? 'mateOver' : 'left');
     }
 
-    applySnapshot(m) {
-        Object.assign(this.keys, m.k);
-        const seen = new Set();
+    // The board arrives about 30 times a second. It is not drawn the moment it arrives: it goes in a
+    // small buffer and the screen shows the board as it was ~100 ms ago, blending between the two
+    // frames around that moment. That hides network jitter, so pieces glide instead of stepping.
+    queueSnapshot(m) {
+        const now = performance.now();
+        const d = now - m.ts;
+        if (this.clock === undefined) this.clock = d;
+        else if (d < this.clock) this.clock = d;                 // a faster delivery: trust it at once
+        else this.clock += (d - this.clock) * 0.01;              // slower ones only nudge the estimate
+        const map = new Map();
         const f = m.s;
-        for (let i = 0; i < f.length; i += 7) {
-            const [id, x, y, rot, k, ice, sel] = f.slice(i, i + 7);
-            seen.add(id);
-            const key = this.keys[k];
-            let s = this.sprites.get(id);
-            if (!s) {
-                if (!key || !this.textures.exists(key)) continue;
-                const img = this.add.image(x, y, key).setDepth(10).setScale(INV);
-                s = { img, ice: null, tx: x, ty: y, rot: rot / 100, sel, key };
-                this.sprites.set(id, s);
-            }
-            s.tx = x;
-            s.ty = y;
-            s.rot = rot / 100;
-            s.sel = sel;
-            if (key && key !== s.key && this.textures.exists(key)) {
-                s.key = key;
-                s.img.setTexture(key);
-            }
-            if (ice > 0 && !s.ice) s.ice = this.add.image(s.img.x, s.img.y, 'ice').setDepth(11).setScale(INV);
-            if (s.ice) s.ice.setAlpha(ice / 100);
-            if (ice === 0 && s.ice) { s.ice.destroy(); s.ice = null; }
-        }
-        // Pieces gone on the host: pop them here too
-        for (const [id, s] of this.sprites) {
-            if (seen.has(id)) continue;
-            this.burst.setParticleTint(0xffffff);
-            this.burst.emitParticleAt(s.img.x, s.img.y, 8);
-            s.img.destroy();
-            if (s.ice) s.ice.destroy();
-            this.sprites.delete(id);
-        }
+        for (let i = 0; i < f.length; i += 7) map.set(f[i], f.slice(i + 1, i + 7));
+        this.snaps.push({ ts: m.ts, map, hud: m, applied: false });
+        if (this.snaps.length > 40) this.snaps.shift();
+    }
 
+    // Applies what is not about pieces (score, target, level, power-ups, my slots) from a frame
+    applyHud(m) {
         if (m.t !== this.target) this.setTarget(m.t);
         if (m.sc) {
             const mine = m.sc[1];
@@ -125,8 +111,27 @@ export class GuestScene extends GameScene {
             if (up) this.showLevelUp(null);
         }
         this.updateLevelHud();
+        // Timer power-up: the same sound, music pause, tick-tock and tint as on the other phone
+        if (m.tm > 0 && !this.timerOn) {
+            this.timerOn = true;
+            this.playSound('timeSound', 0.8);
+            this.music.hold(true);
+            this.sfx.startTickTock();
+            this.tweens.killTweensOf(this.timerOverlay);
+            this.tweens.add({ targets: this.timerOverlay, alpha: 0.1, duration: 400 });
+        } else if (m.tm === 0 && this.timerOn) {
+            this.timerOn = false;
+            this.sfx.stopTickTock();
+            if (!this.gameOver) this.music.hold(false);
+            this.tweens.killTweensOf(this.timerOverlay);
+            this.tweens.add({ targets: this.timerOverlay, alpha: 0, duration: 400 });
+        }
         this.timerBadge.setVisible(m.tm > 0);
         if (m.tm > 0) this.timerBadge.label.setText(String(m.tm));
+        if (m.hn > 0 && !this.hintOn) {
+            this.hintOn = true;
+            this.playSound('bonusSound', 0.7);
+        } else if (m.hn === 0) this.hintOn = false;
         this.hintBadge.setVisible(m.hn > 0);
         if (m.hn > 0) this.hintBadge.label.setText(String(m.hn));
         this.hintIds = m.hp || [];
@@ -152,40 +157,77 @@ export class GuestScene extends GameScene {
         }
     }
 
+    // Everything the host did that has something to see or hear, shown the same way here
     playFx(m) {
-        if (m.fx === 'boom') {
-            this.playSound('explosionSound', 0.9);
-            this.shake(320, 0.02);
-            haptic('bomb');
-            this.sparks.emitParticleAt(m.x, m.y, 30);
-            const wave = this.add.image(m.x, m.y, 'ring').setTint(0xffaa33).setDepth(190).setScale(0.4 * INV);
-            this.tweens.add({ targets: wave, scale: 6 * INV, alpha: 0, duration: 380, ease: 'Cubic.easeOut', onComplete: () => wave.destroy() });
-        } else if (m.fx === 'solved') {
-            this.playSound('popSound', 0.6);
-            this.mpNotice(`${this.mateName()} +${m.pts}`, '#4ade80');
-        } else if (m.fx === 'taken') {
-            this.mpNotice(t('partnerTaken'), '#ffd9a8');
-        } else if (m.fx === 'res') {
-            logEquation(m.a, m.o, m.b, m.target, m.ok);
-            if (m.ok) {
-                this.playSound('popSound', 0.8);
-                this.sfx.rise(3);
-                haptic('success');
-                this.flash(160, 40, 160, 90);
-                this.createFloatingText(this.targetX, this.eqY + this.slotSize * 0.6, `+${m.pts}`, 0x4ade80);
-                this.slotImgs.forEach((img) => {
-                    if (!img) return;
-                    this.burst.emitParticleAt(img.x, img.y, 12);
-                });
-            } else {
-                this.playSound('dropSound', 0.8);
-                haptic('fail');
-                this.shake(220, 0.012);
-                this.flash(140, 200, 50, 50);
-                const shown = m.o === '-' ? '−' : m.o;
-                const made = m.made === null ? `${m.a} ${shown} ${m.b} ${t('notWhole')}` : `${m.a} ${shown} ${m.b} = ${m.made}  ≠ ${m.target}`;
-                this.mpNotice(made, '#ffb4b4');
+        switch (m.fx) {
+            case 'boom':
+                this.boomFx(m.x, m.y);
+                break;
+            case 'fuse': {
+                const s = this.sprites.get(m.id);
+                if (s) this.fuseVisual(s, m.ms);
+                break;
             }
+            case 'heat': {
+                const { reach, travel } = this.heatFx(m.x, m.y);
+                for (const [, sp] of this.sprites) {
+                    if (!sp.ice) continue;
+                    const d = Phaser.Math.Distance.Between(m.x, m.y, sp.img.x, sp.img.y);
+                    this.time.delayedCall((d / reach) * travel, () => { if (sp.alive) this.thawFx(sp.img.x, sp.img.y, sp.img); });
+                }
+                break;
+            }
+            case 'recycle':
+                this.recycleFx(m.x, m.y, m.ends, false);
+                break;
+            case 'ice':
+                this.crackIceFx(m.x, m.y);
+                break;
+            case 'jdmg':
+                this.sparks.emitParticleAt(m.x, m.y, 6);
+                if (m.hp <= 0) {
+                    this.shards.emitParticleAt(m.x, m.y, 16);
+                    this.sparks.emitParticleAt(m.x, m.y, 10);
+                    this.sfx.metalBreak();
+                } else {
+                    this.sfx.clank(m.hp === 2 ? 1 : 0.85);
+                    this.shards.emitParticleAt(m.x, m.y, 3);
+                }
+                break;
+            case 'jdrop':
+                this.time.delayedCall(450, () => this.sfx.clank(0.7));
+                break;
+            case 'solved':
+                this.playSound('popSound', 0.6);
+                this.mpNotice(`${this.mateName()} +${m.pts}`, '#4ade80');
+                break;
+            case 'taken':
+                this.mpNotice(t('partnerTaken'), '#ffd9a8');
+                break;
+            case 'res':
+                this.showResult(m);
+                break;
+            default:
+        }
+    }
+
+    showResult(m) {
+        logEquation(m.a, m.o, m.b, m.target, m.ok);
+        if (m.ok) {
+            this.playSound('popSound', 0.8);
+            this.sfx.rise(3);
+            haptic('success');
+            this.flash(160, 40, 160, 90);
+            this.createFloatingText(this.targetX, this.eqY + this.slotSize * 0.6, `+${m.pts}`, 0x4ade80);
+            this.slotImgs.forEach((img) => { if (img) this.burst.emitParticleAt(img.x, img.y, 12); });
+        } else {
+            this.playSound('dropSound', 0.8);
+            haptic('fail');
+            this.shake(220, 0.012);
+            this.flash(140, 200, 50, 50);
+            const shown = m.o === '-' ? '−' : m.o;
+            const made = m.made === null ? `${m.a} ${shown} ${m.b} ${t('notWhole')}` : `${m.a} ${shown} ${m.b} = ${m.made}  ≠ ${m.target}`;
+            this.mpNotice(made, '#ffb4b4');
         }
     }
 
@@ -229,26 +271,77 @@ export class GuestScene extends GameScene {
 
     // ------------------------------------------------------------------ smooth drawing
 
-    update(time, delta) {
-        const k = Math.min(1, delta / 55);
-        let mine = 0;
-        let mate = 0;
+    removeSprite(id, s) {
+        this.clearFuse(s);
+        s.alive = false;
+        this.burst.setParticleTint(0xffffff);
+        this.burst.emitParticleAt(s.img.x, s.img.y, 8);
+        s.img.destroy();
+        if (s.ice) s.ice.destroy();
+        this.sprites.delete(id);
+    }
+
+    update() {
+        const snaps = this.snaps;
         this.selRings.forEach((r) => r.setVisible(false));
         this.mateRings.forEach((r) => r.setVisible(false));
         this.hintRings.forEach((r) => r.setVisible(false));
         this.hintGlows.forEach((r) => r.setVisible(false));
-        for (const [id, s] of this.sprites) {
-            s.img.x += (s.tx - s.img.x) * k;
-            s.img.y += (s.ty - s.img.y) * k;
-            if (s.key && s.key.includes('junk')) s.img.rotation = s.rot;
-            if (s.ice) s.ice.setPosition(s.img.x, s.img.y);
-            if (s.sel === 2 && mine < 3) this.selRings[mine++].setVisible(true).setPosition(s.img.x, s.img.y);
-            else if (s.sel === 1 && mate < 3) this.mateRings[mate++].setVisible(true).setPosition(s.img.x, s.img.y);
+        if (!snaps.length) return;
+
+        // The host's clock now, minus the delay that keeps a frame ahead of the one being shown
+        const rt = performance.now() - this.clock - 100;
+        // Frames the screen has moved past: apply their score/target/etc. once, then forget old ones
+        for (const sn of snaps) {
+            if (sn.ts <= rt && !sn.applied) {
+                sn.applied = true;
+                this.applyHud(sn.hud);
+            }
+        }
+        while (snaps.length > 2 && snaps[1].ts <= rt) snaps.shift();
+        const A = snaps[0];
+        const B = snaps.length > 1 ? snaps[1] : snaps[0];
+        const span = B.ts - A.ts;
+        const k = span > 0 ? Phaser.Math.Clamp((rt - A.ts) / span, 0, 1) : 1;
+
+        let mine = 0;
+        let mate = 0;
+        for (const [id, to] of B.map) {
+            const key = this.keys[to[3]];
+            let sp = this.sprites.get(id);
+            if (!sp) {
+                if (!key || !this.textures.exists(key)) continue;
+                const from0 = A.map.get(id) || to;
+                const img = this.add.image(from0[0], from0[1], key).setDepth(10).setScale(INV);
+                sp = { img, ice: null, key, alive: true };
+                this.sprites.set(id, sp);
+            }
+            const from = A.map.get(id) || to;
+            const x = from[0] + (to[0] - from[0]) * k;
+            const y = from[1] + (to[1] - from[1]) * k;
+            sp.img.setPosition(x, y);
+            if (key && key !== sp.key && this.textures.exists(key)) {
+                sp.key = key;
+                sp.img.setTexture(key);
+            }
+            if (key && key.includes('junk')) sp.img.rotation = (from[2] + (to[2] - from[2]) * k) / 100;
+            const ice = from[4] + (to[4] - from[4]) * k;
+            if (ice > 0 && !sp.ice) sp.ice = this.add.image(x, y, 'ice').setDepth(11).setScale(INV);
+            if (sp.ice) {
+                sp.ice.setPosition(x, y).setAlpha(ice / 100);
+                if (to[4] === 0 && from[4] === 0) { sp.ice.destroy(); sp.ice = null; }
+            }
+            if (to[5] === 2 && mine < 3) this.selRings[mine++].setVisible(true).setPosition(x, y);
+            else if (to[5] === 1 && mate < 3) this.mateRings[mate++].setVisible(true).setPosition(x, y);
             const h = this.hintIds.indexOf(id);
             if (h >= 0 && h < 3) {
-                this.hintRings[h].setVisible(true).setPosition(s.img.x, s.img.y);
-                this.hintGlows[h].setVisible(true).setPosition(s.img.x, s.img.y);
+                this.hintRings[h].setVisible(true).setPosition(x, y);
+                this.hintGlows[h].setVisible(true).setPosition(x, y);
             }
+        }
+        // Pieces that are gone in the newer frame pop once the blend is past halfway
+        if (k >= 0.5) {
+            for (const [id, sp] of [...this.sprites]) if (!B.map.has(id)) this.removeSprite(id, sp);
         }
     }
 }

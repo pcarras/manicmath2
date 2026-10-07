@@ -13,9 +13,10 @@ const DEFAULTS = {
     missions: { date: null, list: [] },
     themes: ['classic'],
     theme: 'classic',
-    items: { scene: ['space'], pop: ['glow'] },   // owned cosmetics other than piece themes
+    items: { scene: ['space'], pop: ['glow'], acc: ['none'] },   // owned cosmetics other than piece themes
     scene: 'space',
     pop: 'glow',
+    acc: 'none',
     player: null,                // { id, a, n, num } -> name built from word lists (no free text)
     rewardsSeen: []              // streak milestones already paid
 };
@@ -345,10 +346,21 @@ export const POPS = [
     { id: 'beans', price: 150, pt: 'Grãos de café', en: 'Coffee beans' }
 ];
 
+// Accessories for Bica, the mascot (worn in the menu and the shop)
+export const ACCESSORIES = [
+    { id: 'none', price: 0, pt: 'Sem acessório', en: 'No accessory' },
+    { id: 'cap', price: 120, pt: 'Boné', en: 'Cap' },
+    { id: 'party', price: 120, pt: 'Chapéu de festa', en: 'Party hat' },
+    { id: 'glasses', price: 150, pt: 'Óculos de génio', en: 'Genius glasses' },
+    { id: 'scarf', price: 150, pt: 'Cachecol', en: 'Scarf' },
+    { id: 'headphones', price: 200, pt: 'Auscultadores', en: 'Headphones' },
+    { id: 'crown', price: 300, pt: 'Coroa', en: 'Crown' }
+];
+
 export const SPARE_PRICE = 80;
 export const SPARE_MAX = 2;
 
-const CATALOG = { theme: THEMES, scene: SCENES, pop: POPS };
+const CATALOG = { theme: THEMES, scene: SCENES, pop: POPS, acc: ACCESSORIES };
 
 // Items on sale; `hidden` ones (art still being made) only show to players who already own them
 export function catalog(kind) {
