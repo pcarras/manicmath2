@@ -1,10 +1,10 @@
 
 import { COLORS, CONSTANTS, PIECE_BODY, LEVELS, SCORING } from '../constants.js';
-import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX, JUNK_SIDE, SHEEN_FRAMES } from '../textures.js';
+import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX, JUNK_SIDE, SHEEN_FRAMES, POP_FX } from '../textures.js';
 import { Sfx } from '../sfx.js';
 import { DRILLS } from '../drills.js';
 import { INV, RES, view, setupCamera } from '../display.js';
-import { createStarfield } from '../starfield.js';
+import { createBackdrop } from '../backdrops.js';
 import { safeAreaTop, safeAreaBottom } from '../pwa.js';
 import { t } from '../i18n.js';
 import { settings, haptic, isDebug } from '../settings.js';
@@ -12,7 +12,7 @@ import { chunkyButton, roundButton, modal, openSettings } from '../ui.js';
 import { stats, daily, todayKey, modeBest } from '../stats.js';
 import { report, achievementText, drawMedal } from '../achievements.js';
 import { MusicDirector } from '../music.js';
-import { track, addBeans, completeDaily, missionText } from '../progress.js';
+import { track, addBeans, completeDaily, missionText, currentItem } from '../progress.js';
 import { submitScore, shareText, share } from '../ranking.js';
 
 const {
@@ -135,7 +135,7 @@ export class GameScene extends Phaser.Scene {
         this.tweens.resumeAll();
 
         ensureTextures(this);
-        this.bg = createStarfield(this);
+        this.bg = createBackdrop(this, currentItem('scene'));
 
         // Walls reach far above the screen so pieces spawned off-screen stay inside; no ceiling.
         // The floor sits a little above the screen edge so taps never start where Android's
@@ -402,12 +402,17 @@ export class GameScene extends Phaser.Scene {
     }
 
     createFx() {
-        this.burst = this.add.particles(0, 0, 'particle', {
+        // The burst when pieces pop: the effect chosen in the shop
+        const fx = POP_FX[currentItem('pop')] || POP_FX.glow;
+        this.popFx = fx;
+        this.burst = this.add.particles(0, 0, fx.key, {
             speed: { min: 120, max: 300 },
-            scale: { start: 0.9, end: 0 },
-            blendMode: 'ADD',
-            lifespan: 420,
-            gravityY: 300,
+            scale: fx.scale || { start: 0.9, end: 0 },
+            alpha: fx.alpha || 1,
+            rotate: fx.rotate ? { min: 0, max: 360 } : 0,
+            blendMode: fx.add ? 'ADD' : 'NORMAL',
+            lifespan: fx.lifespan || 420,
+            gravityY: fx.gravity ?? 300,
             emitting: false
         }).setDepth(200);
 
@@ -662,7 +667,7 @@ export class GameScene extends Phaser.Scene {
         let popped = 0;
         for (const p of [...this.pieces]) {
             if (p.selected || p.body.position.y - R > limit) continue;
-            this.burst.setParticleTint(p.color);
+            this.tintBurst(p.color);
             this.burst.emitParticleAt(p.img.x, p.img.y, 8);
             this.removePiece(p);
             popped++;
@@ -977,7 +982,7 @@ export class GameScene extends Phaser.Scene {
             if (d) {
                 const targets = d.ice ? [d.img, d.ice] : [d.img];
                 this.tweens.killTweensOf(targets);
-                this.burst.setParticleTint(p.color);
+                this.tintBurst(p.color);
                 this.burst.emitParticleAt(d.img.x, d.img.y, 14);
                 this.starBurst.emitParticleAt(d.img.x, d.img.y, 4);
                 this.tweens.add({
@@ -992,7 +997,7 @@ export class GameScene extends Phaser.Scene {
             }
 
             if (p) {
-                this.burst.setParticleTint(p.color);
+                this.tintBurst(p.color);
                 this.burst.emitParticleAt(p.img.x, p.img.y, 10);
                 p.selected = false;
                 this.removePiece(p);
@@ -1261,7 +1266,7 @@ export class GameScene extends Phaser.Scene {
             return;
         }
         const { x, y } = p.body.position;
-        this.burst.setParticleTint(p.color);
+        this.tintBurst(p.color);
         this.burst.emitParticleAt(x, y, 12);
         this.removePiece(p);
 
@@ -1365,7 +1370,7 @@ export class GameScene extends Phaser.Scene {
                 const qx = q.body.position.x;
                 const qy = q.body.position.y;
                 this.sparks.emitParticleAt(qx, qy, 14);
-                this.burst.setParticleTint(0x7dd3fc);
+                this.tintBurst(0x7dd3fc);
                 this.burst.emitParticleAt(qx, qy, 12);
                 const ring = this.add.image(qx, qy, 'ring').setTint(0x7dd3fc).setBlendMode(Phaser.BlendModes.ADD)
                     .setDepth(998).setScale(0.6 * INV);
@@ -1486,7 +1491,7 @@ export class GameScene extends Phaser.Scene {
     detonate(p) {
         if (!p.alive || this.gameOver) return;
         const { x, y } = p.body.position;
-        this.burst.setParticleTint(p.color);
+        this.tintBurst(p.color);
         this.burst.emitParticleAt(x, y, 12);
         this.removePiece(p);
         this.explode(x, y);
@@ -1533,7 +1538,7 @@ export class GameScene extends Phaser.Scene {
         this.tweens.add({
             targets: warm, alpha: 0.12, duration: 250, yoyo: true, hold: 350, onComplete: () => warm.destroy()
         });
-        this.burst.setParticleTint(0xff8a1f);
+        this.tintBurst(0xff8a1f);
         this.burst.emitParticleAt(x, y, 20);
         this.sparks.emitParticleAt(x, y, 14);
 
@@ -1771,6 +1776,12 @@ export class GameScene extends Phaser.Scene {
         r.box.destroy();
     }
 
+    // Glow and bubbles take the piece colour; the other effects keep their own colours
+    tintBurst(color) {
+        const fx = this.popFx;
+        this.burst.setParticleTint(fx && fx.tint !== undefined ? fx.tint : color);
+    }
+
     // Coffee beans are banked straight away (quitting mid-game keeps them)
     earnBeans(n, x, y) {
         const won = this.zen ? Math.ceil(n / 2) : n;
@@ -1964,7 +1975,7 @@ export class GameScene extends Phaser.Scene {
     crackIce(p) {
         const ice = p.ice;
         this.tweens.killTweensOf(ice);
-        this.burst.setParticleTint(0xbfe9ff);
+        this.tintBurst(0xbfe9ff);
         this.burst.emitParticleAt(p.img.x, p.img.y, 8);
         if (settings.get('sfx') && this.cache.audio.exists('clickbutton')) {
             this.sound.play('clickbutton', { volume: 0.4, detune: 900 });
@@ -2367,7 +2378,7 @@ export class GameScene extends Phaser.Scene {
         list.forEach((p, i) => {
             this.time.delayedCall(i * stepMs, () => {
                 if (!p.img.active) return;
-                this.burst.setParticleTint(p.color);
+                this.tintBurst(p.color);
                 this.burst.emitParticleAt(p.img.x, p.img.y, 6);
                 if (i % 5 === 0) this.playSound('popSound', 0.25);
                 // kill the ice freeze tween too, or it keeps pushing the ice alpha back up

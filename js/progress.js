@@ -12,6 +12,9 @@ const DEFAULTS = {
     missions: { date: null, list: [] },
     themes: ['classic'],
     theme: 'classic',
+    items: { scene: ['space'], pop: ['glow'] },   // owned cosmetics other than piece themes
+    scene: 'space',
+    pop: 'glow',
     player: null,                // { id, a, n, num } -> name built from word lists (no free text)
     rewardsSeen: []              // streak milestones already paid
 };
@@ -19,7 +22,11 @@ const DEFAULTS = {
 function load() {
     try {
         const s = JSON.parse(localStorage.getItem(KEY) || '{}');
-        return { ...DEFAULTS, ...s, streak: { ...DEFAULTS.streak, ...(s.streak || {}) } };
+        return {
+            ...DEFAULTS, ...s,
+            streak: { ...DEFAULTS.streak, ...(s.streak || {}) },
+            items: { ...DEFAULTS.items, ...(s.items || {}) }
+        };
     } catch {
         return { ...DEFAULTS };
     }
@@ -227,7 +234,9 @@ export const THEMES = [
     { id: 'classic', price: 0, pt: 'Clássico', en: 'Classic' },
     { id: 'neon', price: 150, pt: 'Neon', en: 'Neon' },
     { id: 'pixel', price: 250, pt: 'Retro Pixel', en: 'Retro Pixel' },
-    { id: 'bica', price: 400, pt: 'Bica', en: 'Espresso' }
+    { id: 'bica', price: 400, pt: 'Bica', en: 'Espresso' },
+    { id: 'candy', price: 300, pt: 'Doces', en: 'Sweets' },
+    { id: 'planets', price: 350, pt: 'Planetas', en: 'Planets' }
 ];
 
 export function themeState() {
@@ -294,4 +303,108 @@ export function rerollName() {
     s.player = p;
     save(s);
     return player();
+}
+
+// ------------------------------------------------------------------ shop: scenes, pop effects, spare coffee
+
+// Backgrounds for the main game (purely cosmetic)
+export const SCENES = [
+    { id: 'space', price: 0, pt: 'Espaço', en: 'Space' },
+    { id: 'lisbon', price: 300, pt: 'Lisboa à noite', en: 'Lisbon by night' },
+    { id: 'ocean', price: 250, pt: 'Fundo do mar', en: 'Under the sea' },
+    { id: 'beach', price: 250, pt: 'Praia ao pôr do sol', en: 'Sunset beach' }
+];
+
+// What flies out of the pieces when an equation is right
+export const POPS = [
+    { id: 'glow', price: 0, pt: 'Brilho', en: 'Glow' },
+    { id: 'confetti', price: 120, pt: 'Confetes', en: 'Confetti' },
+    { id: 'bubbles', price: 120, pt: 'Bolhas', en: 'Bubbles' },
+    { id: 'hearts', price: 150, pt: 'Corações', en: 'Hearts' },
+    { id: 'beans', price: 150, pt: 'Grãos de café', en: 'Coffee beans' }
+];
+
+export const SPARE_PRICE = 80;
+export const SPARE_MAX = 2;
+
+const CATALOG = { theme: THEMES, scene: SCENES, pop: POPS };
+
+export function catalog(kind) {
+    return CATALOG[kind];
+}
+
+export function ownedItems(kind) {
+    const s = load();
+    return kind === 'theme' ? s.themes : s.items[kind] || [];
+}
+
+export function currentItem(kind) {
+    const s = load();
+    return s[kind] || CATALOG[kind][0].id;
+}
+
+// Buys at `price` (a daily deal may be cheaper than the list price) and equips it
+export function buyItem(kind, id, price) {
+    if (kind === 'theme') {
+        const s = load();
+        if (s.themes.includes(id) || s.beans < price) return false;
+        s.beans -= price;
+        s.themes = [...s.themes, id];
+        s.theme = id;
+        save(s);
+        notify();
+        return true;
+    }
+    const s = load();
+    const list = s.items[kind] || [];
+    if (!CATALOG[kind].some((x) => x.id === id) || list.includes(id) || s.beans < price) return false;
+    s.beans -= price;
+    s.items = { ...s.items, [kind]: [...list, id] };
+    s[kind] = id;
+    save(s);
+    notify();
+    return true;
+}
+
+export function equipItem(kind, id) {
+    if (kind === 'theme') return equipTheme(id);
+    const s = load();
+    if (!(s.items[kind] || []).includes(id)) return false;
+    s[kind] = id;
+    save(s);
+    notify();
+    return true;
+}
+
+// Spare coffees protect the daily streak; at most SPARE_MAX can be bought (milestones may give more)
+export function spares() {
+    return load().streak.freezes;
+}
+
+export function buySpare() {
+    const s = load();
+    if (s.streak.freezes >= SPARE_MAX || s.beans < SPARE_PRICE) return false;
+    s.beans -= SPARE_PRICE;
+    s.streak.freezes += 1;
+    save(s);
+    notify();
+    return true;
+}
+
+// Three items on sale today, the same for everyone (picked from the date)
+export function dailyDeals() {
+    const key = todayKey();
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0;
+    const next = () => { h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0; h ^= h >>> 13; return h / 4294967296; };
+    const pool = [];
+    Object.entries(CATALOG).forEach(([kind, list]) => list.forEach((it) => { if (it.price > 0) pool.push({ kind, item: it }); }));
+    const cuts = [30, 40, 50];
+    const out = [];
+    while (out.length < 3 && pool.length) {
+        const { kind, item } = pool.splice(Math.floor(next() * pool.length), 1)[0];
+        const off = cuts[out.length];
+        out.push({ kind, item, off, price: Math.round((item.price * (100 - off)) / 100 / 5) * 5 });
+    }
+    return out;
 }

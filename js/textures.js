@@ -11,6 +11,15 @@ export const TEX_SIZE = DIAMETER + 4;
 // Use it to size images: setScale(displayPx / TEX_PX).
 export const TEX_PX = TEX_SIZE * RES;
 export const SHEEN_FRAMES = 10;
+// Pop effects sold in the shop (see progress.js POPS): particle texture and how it moves
+export const POP_FX = {
+    glow: { key: 'particle', add: true },
+    confetti: { key: 'confetti', tint: [0xff5d73, 0xffd23f, 0x4ade80, 0x38bdf8, 0xa855f7], rotate: true, gravity: 520, lifespan: 700, scale: { start: 1, end: 0.6 } },
+    bubbles: { key: 'popBubble', gravity: -160, lifespan: 650, scale: { start: 0.5, end: 1.1 }, alpha: { start: 1, end: 0 } },
+    hearts: { key: 'popHeart', tint: [0xff5d8f, 0xff8fab, 0xff3366, 0xffc2d4], gravity: -60, lifespan: 650, scale: { start: 1, end: 0.3 } },
+    beans: { key: 'popBean', tint: 0xffffff, rotate: true, gravity: 700, lifespan: 750, scale: { start: 1.1, end: 0.8 } }
+};
+
 export const OP_KEYS = { '+': 'plus', '-': 'minus', '×': 'times', '÷': 'divide' };
 
 const TIMER_IMG_URL = 'assets/power up time20s.png';
@@ -127,6 +136,70 @@ function drawBall(ctx, c, color, style = {}) {
         ctx.globalAlpha = 1;
         ctx.lineWidth = style.hc ? 5 : 3;
         ctx.strokeStyle = style.hc ? '#ffffff' : '#f4efe6';
+        circleFill(ctx, c, R - 0.5);
+        ctx.stroke();
+        return;
+    }
+    if (theme === 'candy') {
+        // Hard candy: glossy, with soft white swirl stripes and a big shine
+        const g = ctx.createRadialGradient(c - R * 0.3, c - R * 0.35, R * 0.1, c, c, R);
+        g.addColorStop(0, hex(shade(color, 1.45)));
+        g.addColorStop(0.6, hex(color));
+        g.addColorStop(1, hex(shade(color, 0.75)));
+        ctx.fillStyle = g;
+        circleFill(ctx, c, R);
+        ctx.fill();
+        ctx.save();
+        circleFill(ctx, c, R - 1);
+        ctx.clip();
+        ctx.translate(c, c);
+        ctx.fillStyle = 'rgba(255,255,255,0.22)';
+        for (let i = 0; i < 6; i++) {
+            ctx.rotate(Math.PI / 3);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.quadraticCurveTo(R * 0.5, -R * 0.2, R * 1.1, R * 0.05);
+            ctx.quadraticCurveTo(R * 0.5, R * 0.15, 0, 0);
+            ctx.fill();
+        }
+        ctx.restore();
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.beginPath();
+        ctx.ellipse(c - R * 0.38, c - R * 0.5, R * 0.3, R * 0.13, -0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = style.hc ? 6 : 3;
+        ctx.strokeStyle = style.hc ? '#000000' : hex(shade(color, 0.55));
+        circleFill(ctx, c, R - 0.5);
+        ctx.stroke();
+        return;
+    }
+    if (theme === 'planets') {
+        // A little planet: lit from the top left, cloud bands and a few craters, dark night side
+        const g = ctx.createRadialGradient(c - R * 0.4, c - R * 0.4, R * 0.05, c, c, R * 1.05);
+        g.addColorStop(0, hex(shade(color, 1.35)));
+        g.addColorStop(0.55, hex(color));
+        g.addColorStop(1, hex(shade(color, 0.35)));
+        ctx.fillStyle = g;
+        circleFill(ctx, c, R);
+        ctx.fill();
+        ctx.save();
+        circleFill(ctx, c, R - 1);
+        ctx.clip();
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        [[-0.45, 0.12], [0.05, 0.08], [0.5, 0.1]].forEach(([dy, th]) => {
+            ctx.beginPath();
+            ctx.ellipse(c, c + R * dy, R * 1.2, R * th, -0.25, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.fillStyle = 'rgba(0,0,0,0.16)';
+        [[0.45, -0.25, 0.14], [-0.5, 0.45, 0.1], [0.25, 0.6, 0.08]].forEach(([dx, dy, r]) => {
+            ctx.beginPath();
+            ctx.arc(c + R * dx, c + R * dy, R * r, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.restore();
+        ctx.lineWidth = style.hc ? 6 : 2;
+        ctx.strokeStyle = style.hc ? '#000000' : 'rgba(255,255,255,0.25)';
         circleFill(ctx, c, R - 0.5);
         ctx.stroke();
         return;
@@ -620,6 +693,42 @@ export function ensureTextures(scene) {
     canvasTexture(scene, 'confetti', 8, 14, (ctx) => {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, 8, 14);
+    });
+
+    // Shop pop effects: heart, coffee bean and bubble (white or self-coloured, tinted per particle)
+    canvasTexture(scene, 'popHeart', 20, 18, (ctx) => {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(10, 17);
+        ctx.bezierCurveTo(-4, 8, 2, -3, 10, 4);
+        ctx.bezierCurveTo(18, -3, 24, 8, 10, 17);
+        ctx.fill();
+    });
+    canvasTexture(scene, 'popBean', 16, 20, (ctx) => {
+        ctx.fillStyle = '#7a4524';
+        ctx.beginPath();
+        ctx.ellipse(8, 10, 6.5, 9, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#3b1d0c';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(8, 2);
+        ctx.bezierCurveTo(4, 7, 12, 13, 8, 18);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,220,180,0.35)';
+        ctx.beginPath();
+        ctx.ellipse(5.5, 6, 1.6, 3, 0.3, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    canvasTexture(scene, 'popBubble', 24, 24, (ctx) => {
+        const g = ctx.createRadialGradient(12, 12, 4, 12, 12, 11);
+        g.addColorStop(0, 'rgba(255,255,255,0.05)');
+        g.addColorStop(0.8, 'rgba(255,255,255,0.35)');
+        g.addColorStop(1, 'rgba(255,255,255,0.9)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(12, 12, 11, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath(); ctx.arc(8, 8, 2.5, 0, Math.PI * 2); ctx.fill();
     });
 
     // Red edge glow shown when the pile gets close to the death line (stretched to the screen)

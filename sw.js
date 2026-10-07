@@ -30,6 +30,7 @@ const ASSETS = [
     './js/audio.js',
     './js/drills.js',
     './js/drillbg.js',
+    './js/backdrops.js',
     './js/scenes/AchievementsScene.js',
     './js/scenes/GameScene.js',
     './js/scenes/MenuScene.js',
