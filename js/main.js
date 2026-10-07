@@ -25,6 +25,12 @@ const fontsReady = document.fonts && document.fonts.load
 
 await Promise.all([fontsReady, playIntro()]);
 
+function makeAudioContext() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return undefined;
+    try { return new AC({ latencyHint: 'balanced' }); } catch { return new AC(); }
+}
+
 const config = {
     type: Phaser.AUTO,
     // Canvas at RES x the CSS size, shown at CSS size (zoom) — cameras zoom back by RES
@@ -33,6 +39,8 @@ const config = {
     backgroundColor: COLORS.bg,
     parent: 'game-container',
     disableContextMenu: true,
+    // A slightly larger audio buffer than the default: phones under load stop dropping samples
+    audio: { context: makeAudioContext() },
     render: {
         powerPreference: 'high-performance',
         antialias: true

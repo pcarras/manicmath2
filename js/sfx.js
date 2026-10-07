@@ -11,6 +11,19 @@ const noteFreq = (step, base = 523.25) => {
     return base * Math.pow(2, semis / 12);
 };
 
+// One noise buffer per audio context, shared by every scene
+let noiseBuf = null;
+function noiseFor(ctx) {
+    if (!noiseBuf || noiseBuf.ctx !== ctx) {
+        const len = ctx.sampleRate;
+        const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        noiseBuf = { ctx, buf };
+    }
+    return noiseBuf.buf;
+}
+
 export class Sfx {
     constructor(scene) {
         this.ctx = scene.sound.context || null;   // null on the HTML5 audio fallback
@@ -20,13 +33,8 @@ export class Sfx {
         this.tick = null;
         if (!this.ctx) return;
         this.bus = audioBus(scene);
-        this.out = this.ctx.createGain();
-        this.out.gain.value = 1;
-        this.out.connect(this.bus ? this.bus.sfx : this.ctx.destination);
-        const len = this.ctx.sampleRate;
-        this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-        const d = this.noise.getChannelData(0);
-        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        this.out = this.bus ? this.bus.sfx : this.ctx.destination;
+        this.noise = noiseFor(this.ctx);
     }
 
     on() {
@@ -109,7 +117,8 @@ export class Sfx {
         let n = 0;
         let next = this.ctx.currentTime + 0.05;
         this.tick = setInterval(() => {
-            while (next < this.ctx.currentTime + 0.12) {
+            if (next < this.ctx.currentTime - 0.05) next = this.ctx.currentTime + 0.05;
+            while (next < this.ctx.currentTime + 0.25) {
                 if (this.on()) {
                     const tick = n % 2 === 0;
                     const at = next - this.ctx.currentTime;
@@ -119,7 +128,7 @@ export class Sfx {
                 n++;
                 next += 0.5;
             }
-        }, 40);
+        }, 60);
     }
 
     stopTickTock() {

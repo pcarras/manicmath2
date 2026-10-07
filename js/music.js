@@ -62,28 +62,23 @@ export function trackForLevel(level) {
     return 3;
 }
 
-function impulse(ctx, seconds = 2.4, decay = 3) {
+// Short mono impulse: convolution cost grows with its length and channels, and phones glitch
+// when the audio thread runs out of time
+function impulse(ctx, seconds = 1.2, decay = 3) {
     const len = Math.floor(ctx.sampleRate * seconds);
-    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
-    for (let ch = 0; ch < 2; ch++) {
-        const d = buf.getChannelData(ch);
-        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
-    }
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
     return buf;
 }
 
 class Synth {
     constructor(ctx, output) {
         this.ctx = ctx;
-        // master -> compressor -> out
+        // master -> shared bus (the bus limiter in audio.js is the only compressor)
         this.master = ctx.createGain();
         this.master.gain.value = 0;
-        const comp = ctx.createDynamicsCompressor();
-        comp.threshold.value = -16;
-        comp.ratio.value = 4;
-        comp.attack.value = 0.005;
-        comp.release.value = 0.2;
-        this.master.connect(comp).connect(output || ctx.destination);
+        this.master.connect(output || ctx.destination);
 
         // pumped bus (pads, bass, arp) ducks on each kick
         this.pump = ctx.createGain();
@@ -92,7 +87,7 @@ class Synth {
         this.reverb = ctx.createConvolver();
         this.reverb.buffer = impulse(ctx);
         const wet = ctx.createGain();
-        wet.gain.value = 0.32;
+        wet.gain.value = 0.38;
         this.reverb.connect(wet).connect(this.master);
 
         this.delay = ctx.createDelay(1);
@@ -132,7 +127,7 @@ class Synth {
         this.master.gain.setValueAtTime(this.master.gain.value, t);
         this.master.gain.linearRampToValueAtTime(0.5, t + 0.8);
         this.nextTime = t + 0.06;
-        this.timer = setInterval(() => this.schedule(), 25);
+        this.timer = setInterval(() => this.schedule(), 60);
     }
 
     stop(fade = 0.4) {
@@ -147,7 +142,10 @@ class Synth {
     schedule() {
         const tr = this.track;
         const sixteenth = 60 / (tr.bpm * (this.danger ? 1.08 : 1)) / 4;
-        while (this.nextTime < this.ctx.currentTime + 0.15) {
+        // If the page stalled (tab hidden, long frame), skip ahead instead of firing a burst of late notes
+        if (this.nextTime < this.ctx.currentTime - 0.05) this.nextTime = this.ctx.currentTime + 0.05;
+        // Notes are queued 0.35 s ahead so a busy main thread never leaves a gap
+        while (this.nextTime < this.ctx.currentTime + 0.35) {
             const sw = this.step % 2 === 1 ? tr.swing * sixteenth : 0;
             this.playStep(tr, this.step, this.nextTime + sw, sixteenth);
             this.nextTime += sixteenth;
@@ -197,8 +195,8 @@ class Synth {
     duck(t) {
         const g = this.pump.gain;
         g.cancelScheduledValues(t);
-        g.setValueAtTime(0.45, t);
-        g.linearRampToValueAtTime(1, t + 0.22);
+        g.setValueAtTime(0.72, t);   // gentle pump: a deeper dip sounds like the music cutting out
+        g.linearRampToValueAtTime(1, t + 0.18);
     }
 
     kick(t) {
@@ -212,7 +210,6 @@ class Synth {
         o.connect(g).connect(this.master);
         o.start(t);
         o.stop(t + 0.34);
-        this.noiseHit(t, 4000, 0.012, 0.25, 'highpass', this.master);   // click
         this.duck(t);
     }
 
@@ -354,16 +351,13 @@ class Synth {
     lead(t, freq, len, wave) {
         const ctx = this.ctx;
         const o = ctx.createOscillator();
-        const o2 = ctx.createOscillator();
         const f = ctx.createBiquadFilter();
         const g = ctx.createGain();
         const lfo = ctx.createOscillator();
         const lg = ctx.createGain();
         o.type = wave;
-        o2.type = 'triangle';
         o.frequency.setValueAtTime(freq * 0.985, t);
         o.frequency.exponentialRampToValueAtTime(freq, t + 0.04);   // tiny scoop into the note
-        o2.frequency.value = freq * 2;
         lfo.frequency.value = 5.5;
         lg.gain.setValueAtTime(0, t);
         lg.gain.linearRampToValueAtTime(freq * 0.012, t + Math.min(0.25, len));   // delayed vibrato
@@ -374,18 +368,25 @@ class Synth {
         g.gain.exponentialRampToValueAtTime(0.075, t + 0.015);
         g.gain.setValueAtTime(0.075, t + len * 0.7);
         g.gain.exponentialRampToValueAtTime(0.0001, t + len + 0.08);
-        const g2 = ctx.createGain();
-        g2.gain.value = 0.25;
         o.connect(f);
-        o2.connect(g2).connect(f);
         f.connect(g).connect(this.master);
         const send = ctx.createGain();
         send.gain.value = 0.5;
         g.connect(send);
         send.connect(this.delay);
         send.connect(this.reverb);
-        [o, o2, lfo].forEach((n) => { n.start(t); n.stop(t + len + 0.1); });
+        [o, lfo].forEach((n) => { n.start(t); n.stop(t + len + 0.1); });
     }
+}
+
+// One synth per audio context for the whole session. Its reverb and echo loop never go idle,
+// so creating a new synth for every game used to leave old ones running and the audio thread
+// overloaded (heard as small dropouts that got worse game after game).
+let shared = null;
+
+function synthFor(ctx, out) {
+    if (!shared || shared.ctx !== ctx) shared = new Synth(ctx, out);
+    return shared;
 }
 
 // Picks the track for the current level, handles danger, pausing and the timer hold.
@@ -394,7 +395,8 @@ export class MusicDirector {
         this.scene = scene;
         const ctx = scene.sound.context;
         const bus = audioBus(scene);
-        this.synth = ctx ? new Synth(ctx, bus && bus.music) : null;   // Web Audio only (silent on the HTML5 audio fallback)
+        this.synth = ctx ? synthFor(ctx, bus && bus.music) : null;
+        if (this.synth) this.synth.danger = false;   // Web Audio only (silent on the HTML5 audio fallback)
         this.current = null;
         this.danger = false;
         this.paused = false;
