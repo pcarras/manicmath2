@@ -75,16 +75,36 @@ const config = {
 
 window.game = new Phaser.Game(config);
 
-// Scale.NONE does not follow the window, so resize the canvas ourselves (address bar, rotation, fullscreen)
+// Scale.NONE does not follow the window, so resize the canvas ourselves (address bar, rotation, fullscreen).
+// The container gets the same pixel size, so the canvas always fills exactly what is visible.
 let resizeTimer = null;
 const fit = () => {
-    const w = Math.round(screenSize().w * RES);
-    const h = Math.round(screenSize().h * RES);
+    const size = screenSize();
+    if (!PHONE) {
+        const root = document.documentElement.style;
+        root.setProperty('--app-w', `${size.w}px`);
+        root.setProperty('--app-h', `${size.h}px`);
+    }
+    const w = Math.round(size.w * RES);
+    const h = Math.round(size.h * RES);
     if (w > 0 && h > 0 && (w !== window.game.scale.width || h !== window.game.scale.height)) {
         window.game.scale.resize(w, h);
+        window.scrollTo(0, 0);
     }
 };
-window.addEventListener('resize', () => {
+const refit = () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(fit, 60);
-});
+};
+window.addEventListener('resize', refit);
+window.addEventListener('orientationchange', refit);
+window.addEventListener('pageshow', refit);
+window.addEventListener('focus', refit);
+document.addEventListener('fullscreenchange', refit);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refit(); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', refit);
+// The first touch and the first seconds after start: no resize event may come when the system bars
+// finish hiding, so the size is checked again a few times
+window.addEventListener('pointerdown', refit, { once: true, capture: true });
+[150, 400, 900, 1800, 3500, 7000].forEach((ms) => setTimeout(fit, ms));
+fit();

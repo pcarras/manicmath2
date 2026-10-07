@@ -2980,7 +2980,7 @@ export class GameScene extends Phaser.Scene {
             if (!line.active) return;
             if (r.ok && r.data.me) line.setText(`🏆 ${t('ranking')}: #${r.data.me.rank}`);
             else if (!r.ok) {
-                line.setText(r.reason === 'soon' ? t('rankingSoon') : r.reason === 'name' ? t('name_refused') : t('rankingOffline'));
+                line.setText(r.reason === 'soon' ? t('rankingSoon') : t('rankingOffline'));
             }
         });
     }

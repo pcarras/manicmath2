@@ -12,15 +12,14 @@
 //      last=1 (week and duel): the week that just ended, used to hand out the weekly prizes
 //      board=friends: this week's scores of me and the players I played a 2-player game with,
 //      { top: every row, me, friends: how many friends I have, near: null }
-// POST /api/leaderboard { board, date, id, name, score }  (name checked by js/namefilter.js)
-//      -> same shape after saving; 422 { error: 'name', reason } when the name is refused
-import { checkName } from '../js/namefilter.js';
+// POST /api/leaderboard { board, date, id, n, a, num, score }  (n, a, num: word-list indexes of the player's generated name)
+//      -> same shape after saving
 import { NAMES, TEAM_NAMES, WEEK_TTL, weekStart, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey, friendsKey } from './_boards.js';
 
 const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-// Older clients send a generated name as word-list indexes
+// A player's name is a generated one: indexes into these lists (no free text)
 const NOUNS = ['Bica', 'Galão', 'Pastel', 'Garoto', 'Cimbalino', 'Abatanado', 'Carioca', 'Pingo', 'Torrada', 'Meia de Leite'];
 const ADJS = ['Veloz', 'Turbo', 'Genial', 'Ninja', 'Feroz', 'Audaz', 'Sagaz', 'Imparável', 'Incrível', 'Radical'];
 
@@ -159,20 +158,12 @@ export default async function handler(req, res) {
                 res.status(400).json({ error: 'invalid' });
                 return;
             }
-            let name = null;
-            if (typeof b.name === 'string') {
-                const c = checkName(b.name);
-                if (!c.ok) {
-                    res.status(422).json({ error: 'name', reason: c.reason });
-                    return;
-                }
-                name = c.name;
-            } else if (idx(b.n, NOUNS) && idx(b.a, ADJS) && Number.isInteger(b.num) && b.num >= 1 && b.num <= 99) {
-                name = `${NOUNS[b.n]} ${ADJS[b.a]} ${b.num}`;
-            } else {
+            // Names are only ever built from the word lists: nobody can type text that other players see
+            if (!(idx(b.n, NOUNS) && idx(b.a, ADJS) && Number.isInteger(b.num) && b.num >= 1 && b.num <= 99)) {
                 res.status(400).json({ error: 'invalid' });
                 return;
             }
+            const name = `${NOUNS[b.n]} ${ADJS[b.a]} ${b.num}`;
             const key = boardKey(board, date);
             const cmds = [
                 ['ZADD', key, 'GT', String(score), id],   // GT: a player's row only ever goes up

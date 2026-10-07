@@ -1,6 +1,6 @@
 // Shared UI kit: chunky 3D buttons (lip + press-down, Candy Crush / Royal Match style),
 // round icon buttons and the settings panel. Used by the menu, pause and game over screens.
-import { settings } from './settings.js';
+import { settings, isDebug } from './settings.js';
 import { t, lang } from './i18n.js';
 import { uiClick } from './bica.js';
 import { view } from './display.js';
@@ -198,7 +198,7 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         if (m) m.close();
         const ROW = 52;
         const inMenu = scene.scene.key === 'MenuScene';
-        m = modal(scene, { depth, height: 100 + ROW * (inMenu ? 10 : 9) + 76, title: t('settings'), fade: first });
+        m = modal(scene, { depth, height: 100 + ROW * ((inMenu ? 10 : 9) - (isDebug() || settings.get('god') ? 0 : 1)) + 76, title: t('settings'), fade: first });
         const { panel } = m;
         let y = panel.y + 96;
         ['music', 'sfx', 'vibration'].forEach((key) => {
@@ -237,12 +237,17 @@ export function openSettings(scene, { depth = 720, onClose } = {}) {
         // Gameplay options being tested
         toggleRow(scene, m, y, t('tests'), t('open'), true, () => openTests(scene, { depth: depth + 40 }));
         y += ROW;
-        // Testing: unlimited beans, everything open
+        // Testing: unlimited beans, everything open. Hidden from players: it only shows in debug mode
+        // (5 quick taps on the version in the menu), or while it is already on
         const god = !!settings.get('god');
-        toggleRow(scene, m, y, t('godMode'), god ? t('on') : t('off'), god, () => {
-            settings.set('god', !god);
-            render();
-        });
+        if (isDebug() || god) {
+            toggleRow(scene, m, y, t('godMode'), god ? t('on') : t('off'), god, () => {
+                settings.set('god', !god);
+                render();
+            });
+        } else {
+            y -= ROW;
+        }
         // The tutorial can be replayed from here (only offered in the menu)
         if (inMenu) {
             y += ROW;

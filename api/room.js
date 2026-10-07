@@ -1,10 +1,10 @@
 // Two-player rooms for the TEAM and DUEL modes, on the same Upstash Redis as the ranking.
 // Both phones build the same pieces from a shared seed, so only small game events travel:
 // "I solved it (these pieces, next target)", "here is some junk", "my board overflowed".
-// There is no chat and names come from the ranking name rules (js/namefilter.js).
+// There is no chat and names are generated from word lists (see cleanName).
 //
-// POST /api/room { action: 'create', mode: 'team'|'duel', id, name | n,a,num }  -> { code, seed, mode, me: 0, now }
-// POST /api/room { action: 'join', code, id, name }                   -> { code, seed, mode, me: 1, now }
+// POST /api/room { action: 'create', mode: 'team'|'duel', id, n, a, num }  -> { code, seed, mode, me: 0, now }
+// POST /api/room { action: 'join', code, id, n, a, num }                 -> { code, seed, mode, me: 1, now }
 // POST /api/room { action: 'event', code, id, ev }                    -> { i, now }
 // POST /api/room { action: 'leave', code, id }                        -> { ok: true }
 // POST /api/room { action: 'result', code, id, win?, score?, total? } -> { counted }
@@ -13,7 +13,6 @@
 //      -> { counted, won? }  (won: in a duel, whether the result that counted makes me the winner)
 // GET  /api/room?code=1234&id=<player>&since=<n>
 //      -> { mode, seed, players: [{ name, here }], startAt, now, events: [{ i, from, ...ev }] }
-import { checkName } from '../js/namefilter.js';
 import { NAMES, TEAM_NAMES, WEEK_TTL, weekKey, duelWeekKey, DUEL_ALL_KEY, teamWeekKey, teamGamesKey, friendsKey, FRIENDS_MAX } from './_boards.js';
 
 const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -39,17 +38,12 @@ const validCode = (c) => typeof c === 'string' && /^[0-9]{4}$/.test(c);
 const roomKey = (code) => `room:${code}`;
 const evKey = (code) => `room:${code}:ev`;
 
-// Same name rules as the ranking: a typed name passes the filter, or a generated one comes as
-// word-list indexes (generated names can be longer than a typed one may be)
+// Same name rules as the ranking: a generated name comes as word-list indexes, never as free text
 const NOUNS = ['Bica', 'Galão', 'Pastel', 'Garoto', 'Cimbalino', 'Abatanado', 'Carioca', 'Pingo', 'Torrada', 'Meia de Leite'];
 const ADJS = ['Veloz', 'Turbo', 'Genial', 'Ninja', 'Feroz', 'Audaz', 'Sagaz', 'Imparável', 'Incrível', 'Radical'];
 const idx = (v, list) => Number.isInteger(v) && v >= 0 && v < list.length;
 
 function cleanName(b) {
-    if (typeof b.name === 'string') {
-        const c = checkName(b.name);
-        return c.ok ? c.name : null;
-    }
     if (idx(b.n, NOUNS) && idx(b.a, ADJS) && Number.isInteger(b.num) && b.num >= 1 && b.num <= 99) {
         return `${NOUNS[b.n]} ${ADJS[b.a]} ${b.num}`;
     }

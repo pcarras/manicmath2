@@ -53,10 +53,13 @@ Depois é colar no valor do segredo.
    - Política de privacidade: `https://manic-math-2-pwa.vercel.app/privacy.html`
    - Anúncios: **Não**
    - Classificação de conteúdo: questionário (jogo de puzzle, sem violência)
-   - Público-alvo: escolher idades **13+** é o caminho mais simples. Se incluir menores de 13, a Google aplica as regras do programa Famílias, que pedem mais revisão.
-   - Segurança dos dados: recolhe **Identificadores do dispositivo ou outros** (um identificador aleatório) e **Atividade na app** (pontuação do desafio diário), para funcionalidade da app, não partilhados, encriptados em trânsito, apagados ao fim de 8 dias.
-3. Em **Teste → Teste fechado**, crie uma faixa, carregue o `.aab` do PWABuilder (o primeiro envio tem de ser manual), adicione os testadores pelo email e publique.
+   - Público-alvo: o jogo é pensado para os 6 aos 12 anos, por isso aplica-se o programa **Famílias** da Google. Escolha as faixas etárias reais e confirme que não há anúncios, que não há conversa por texto e que não há texto escrito pelos jogadores (os nomes são sempre gerados). Se escolher só 13+ o caminho é mais simples, mas deixa de ser um jogo para crianças.
+   - Segurança dos dados: recolhe **Identificadores do dispositivo ou outros** (um identificador aleatório) e **Atividade na app** (pontuações, vitórias de duelo e lista dos últimos 50 jogadores com quem jogou, para o ranking de amigos), para funcionalidade da app, não partilhados, encriptados em trânsito. Os prazos de apagamento estão em `privacy.html`.
+   - Funcionalidades sociais: os jogos a dois usam um código de 4 dígitos e não têm conversa. O ecrã mostra o aviso "joga com quem conheces".
+3. Em **Teste → Teste fechado**, crie uma faixa, carregue o `.aab` do PWABuilder (o primeiro envio tem de ser manual), adicione os testadores pelo email e publique. Em contas pessoais criadas depois de novembro de 2023, o teste fechado é obrigatório antes da produção.
 4. **Regra da conta pessoal**: são precisos **pelo menos 12 testadores inscritos durante 14 dias seguidos** antes de pedir acesso à produção.
+5. **Teste aberto (opcional, depois do fechado)**: em **Teste → Teste aberto** qualquer pessoa com o link ou na loja pode instalar a versão de teste. Serve para apanhar problemas com mais gente antes da produção. Não substitui o teste fechado.
+6. **Antes de enviar a versão final**: confirme que o MODO GOD está desligado (já vem desligado de origem e só aparece no menu de programador).
 
 ## 5. Conta de serviço para envios automáticos (uma vez)
 

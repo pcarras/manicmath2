@@ -10,7 +10,6 @@ async function call(init, query = '') {
     try {
         const r = await fetch(`${API}${query}`, { cache: 'no-store', ...init });
         if (r.status === 503 || r.status === 404) return { ok: false, reason: 'soon' };
-        if (r.status === 422) return { ok: false, reason: 'name' };
         if (!r.ok) return { ok: false, reason: 'offline' };
         return { ok: true, data: await r.json() };
     } catch {
@@ -25,10 +24,9 @@ export function fetchBoard(board, date, last = false) {
     return call({}, `?board=${board}&date=${date || ''}&id=${p.id}${last ? '&last=1' : ''}`);
 }
 
-// A refused name comes back as { ok: false, reason: 'name' }
 export async function submitScore(board, score, date, extra = {}) {
     const p = player();
-    const who = p.custom ? { name: p.custom } : { n: p.n, a: p.a, num: p.num };
+    const who = { n: p.n, a: p.a, num: p.num };
     const r = await call({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

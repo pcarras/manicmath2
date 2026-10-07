@@ -26,7 +26,7 @@ async function post(body) {
 
 function who() {
     const p = player();
-    return p.custom ? { id: p.id, name: p.custom } : { id: p.id, n: p.n, a: p.a, num: p.num };
+    return { id: p.id, n: p.n, a: p.a, num: p.num };
 }
 
 export class Room {

@@ -9,9 +9,9 @@ const DEFAULTS = {
     teachErrors: true,     // a wrong equation shows what it actually makes
     energy: false,         // correct equations fill a bar that lets you pick a special piece
     junk: true,            // a wrong equation drops 2 heavy junk pieces
-    // Testing: infinite coffee beans and every mini game open. ON while the game is being tested;
-    // must be switched OFF by default before the Google Play release.
-    god: true
+    // Testing: infinite coffee beans and every mini game open. OFF for players. The owner turns it on
+    // in Settings after enabling debug mode (5 quick taps on the version in the menu).
+    god: false
 };
 
 function load() {

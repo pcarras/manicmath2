@@ -4,9 +4,8 @@ import { t, lang } from '../i18n.js';
 import { chunkyButton } from '../ui.js';
 import { RES, view, setupCamera } from '../display.js';
 import { todayKey } from '../stats.js';
-import { player, weeklyBadge } from '../progress.js';
+import { player, weeklyBadge, rerollName } from '../progress.js';
 import { fetchBoard } from '../ranking.js';
-import { askName } from '../nameDialog.js';
 
 const ROW_H = 44;
 const BOARDS = ['week', 'classic', 'daily', 'friends', 'duel', 'team'];
@@ -74,8 +73,10 @@ export class RankingScene extends Phaser.Scene {
             fontFamily: 'Righteous', fontSize: '15px', color: '#ffffff'
         }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(51);
         this.showName();
-        chunkyButton(this, w - 66, top + 152, t('change'), 0x0d9488, () => {
-            askName().then((name) => { if (name && this.sys.isActive()) this.scene.restart({ board: this.board, allTime: this.allTime, view: this.viewMode }); });
+        // Names are generated: the button draws another one (it reaches the rankings with the next game)
+        chunkyButton(this, w - 66, top + 152, t('newName'), 0x0d9488, () => {
+            rerollName();
+            this.scene.restart({ board: this.board, allTime: this.allTime, view: this.viewMode });
         }, { width: 100, height: 34, fontSize: 15, depth: 52, enter: false }).setScrollFactor(0);
 
         const footer = this.add.graphics().setScrollFactor(0).setDepth(50);

@@ -19,9 +19,17 @@ const phoneParam = new URLSearchParams(location.search).get('phone');
 const looksDesktop = window.matchMedia('(pointer: fine)').matches && !('ontouchstart' in window) && window.innerWidth > 700;
 export const PHONE = phoneParam === '0' ? null : (phoneParam === '1' || looksDesktop) ? { w: 390, h: 844 } : null;
 
-// CSS size the game is drawn at
+// CSS size the game is drawn at. On some Android phones the page starts with a stale window height
+// (taller than what is really visible while the system bars are still hiding), so the bottom was cut
+// until a swipe made the bars appear. The smallest of the different measures is the visible area.
 export function screenSize() {
-    return PHONE ? { w: PHONE.w, h: PHONE.h } : { w: window.innerWidth, h: window.innerHeight };
+    if (PHONE) return { w: PHONE.w, h: PHONE.h };
+    const vv = window.visualViewport;
+    const pick = (...v) => Math.min(...v.filter((x) => x > 0));
+    return {
+        w: Math.round(pick(window.innerWidth, vv && vv.width, document.documentElement.clientWidth)),
+        h: Math.round(pick(window.innerHeight, vv && vv.height, document.documentElement.clientHeight))
+    };
 }
 
 // Logical (CSS pixel) size of the game

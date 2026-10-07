@@ -30,8 +30,8 @@ body {
 }
 
 #game-container {
-    width: 100vw;
-    height: 100vh;
+    width: var(--app-w, 100vw);
+    height: var(--app-h, 100dvh);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -290,68 +290,6 @@ canvas {
     .bica.crt-off .bica__screen,
     .bica__title span.in { animation-duration: 0.01s; }
 }
-
-/* ------------------------------------------------------------------ name dialog (ranking) */
-
-.mm-dialog {
-    position: fixed;
-    inset: 0;
-    z-index: 9000;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding: calc(14vh + env(safe-area-inset-top, 0px)) 16px 16px;
-    background: rgba(5, 3, 12, 0.78);
-    font-family: 'Righteous', system-ui, sans-serif;
-    animation: mm-fade 0.16s ease-out both;
-}
-.mm-dialog--out { animation: mm-fade 0.16s ease-in reverse both; }
-@keyframes mm-fade { from { opacity: 0; } to { opacity: 1; } }
-
-.mm-dialog__panel {
-    width: min(340px, 100%);
-    background: #1b1238;
-    border: 4px solid #140a24;
-    border-radius: 24px;
-    box-shadow: inset 0 0 0 2px rgba(99, 102, 241, 0.6), 0 10px 0 #2a1c52, 0 18px 30px rgba(0, 0, 0, 0.5);
-    padding: 22px 20px 20px;
-    text-align: center;
-}
-.mm-dialog__title { font-size: 28px; color: #ffd23f; -webkit-text-stroke: 5px #1b0f2e; paint-order: stroke fill; }
-.mm-dialog__hint { margin-top: 6px; font: 14px/1.4 Roboto, system-ui, sans-serif; color: #a5a8dd; }
-.mm-dialog__input {
-    width: 100%;
-    margin-top: 16px;
-    padding: 12px 14px;
-    font: 22px 'Righteous', system-ui, sans-serif;
-    color: #ffffff;
-    background: #070818;
-    border: 2px solid #3a3a6e;
-    border-radius: 14px;
-    outline: none;
-    text-align: center;
-    user-select: text;
-    -webkit-user-select: text;
-}
-.mm-dialog__input:focus { border-color: #ffd23f; }
-.mm-dialog__input::placeholder { color: #55557a; }
-.mm-dialog__error { min-height: 20px; margin-top: 8px; font: 14px Roboto, system-ui, sans-serif; color: #ff8a8a; }
-.mm-dialog__row { display: flex; gap: 12px; margin-top: 8px; }
-
-.mm-btn {
-    flex: 1;
-    padding: 12px 0 14px;
-    font: 20px 'Righteous', system-ui, sans-serif;
-    color: #ffffff;
-    -webkit-text-stroke: 4px #1b0f2e;
-    paint-order: stroke fill;
-    border: 3px solid #140a24;
-    border-radius: 16px;
-    cursor: pointer;
-}
-.mm-btn:active { transform: translateY(4px); box-shadow: none !important; }
-.mm-btn--green { background: #22c55e; box-shadow: 0 5px 0 #14732f; }
-.mm-btn--grey { background: #6b7280; box-shadow: 0 5px 0 #3e4249; }
 
 /* ------------------------------------------------------------------ "new coffee flavour" update note */
 
