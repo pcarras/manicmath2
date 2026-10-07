@@ -87,8 +87,9 @@ export class DrillScene extends Phaser.Scene {
             this.sfx.stopAll();
         });
 
-        for (let i = 0; i < 12; i++) this.spawn(-R * 2 - Math.floor(i / 5) * CONSTANTS.DIAMETER * 1.25);
+        // The question first (some pieces depend on it, e.g. "multiples of k"), then a dozen pieces
         this.newTarget();
+        for (let i = 0; i < 12; i++) this.spawn(-R * 2 - Math.floor(i / 5) * CONSTANTS.DIAMETER * 1.25);
         this.matter.world.pause();   // pieces wait behind the example card
         if (this.bonus) this.coffeeBreak(() => this.showExample());
         else this.showExample();
@@ -221,7 +222,7 @@ export class DrillScene extends Phaser.Scene {
         const demo = d.demo;
         const { w, h } = this;
         const cw = Math.min(w - 28, 350);
-        const ch = 330;
+        const ch = 360;
         const cx = w / 2 - cw / 2;
         const cy = Math.max(this.uiH + 10, h / 2 - ch / 2);
         const box = this.add.container(0, 0).setDepth(600);
@@ -242,21 +243,21 @@ export class DrillScene extends Phaser.Scene {
 
         const size = 62;
         const pieces = demo.pieces.map((label, i) => {
-            const img = this.add.image(w / 2 + (i - 1) * (size + 18), cy + 128, this.demoKey(label)).setScale(size / TEX_PX);
+            const img = this.add.image(w / 2 + (i - 1) * (size + 18), cy + 158, this.demoKey(label)).setScale(size / TEX_PX);
             box.add(img);
             return img;
         });
-        const how = this.add.text(w / 2, cy + 196, txt.how[0], {
+        const how = this.add.text(w / 2, cy + 226, txt.how[0], {
             fontFamily: 'Roboto', fontSize: '16px', color: '#ffffff', align: 'center', wordWrap: { width: cw - 30 }
         }).setOrigin(0.5);
-        const ex = this.add.text(w / 2, cy + 236, txt.how[1], {
+        const ex = this.add.text(w / 2, cy + 266, txt.how[1], {
             fontFamily: 'Righteous', fontSize: '15px', color: '#4ade80', align: 'center', wordWrap: { width: cw - 30 }
         }).setOrigin(0.5);
         box.add([how, ex]);
 
         // Hand taps the right pieces in a loop
         const hand = this.add.image(0, 0, 'hand').setScale(INV * 0.9).setDepth(602);
-        const tick = this.add.text(w / 2 + (size + 18) * 1.6, cy + 128, '✓', {
+        const tick = this.add.text(w / 2 + (size + 18) * 1.6, cy + 158, '✓', {
             fontFamily: 'Arial', fontSize: '44px', color: '#4ade80', stroke: '#14532d', strokeThickness: 6
         }).setOrigin(0.5).setAlpha(0);
         box.add([hand, tick]);
@@ -269,7 +270,7 @@ export class DrillScene extends Phaser.Scene {
                 const p = pieces[idx];
                 this.time.delayedCall(350 + k * 700, () => {
                     if (!alive) return;
-                    this.tweens.add({ targets: hand, x: p.x, y: p.y - 34, duration: 280, ease: 'Sine.easeInOut' });
+                    this.tweens.add({ targets: hand, x: p.x, y: p.y - 30, duration: 280, ease: 'Sine.easeInOut' });
                     this.time.delayedCall(320, () => {
                         if (!alive) return;
                         this.tweens.add({ targets: p, scale: (size / TEX_PX) * 1.22, duration: 120, yoyo: true });
@@ -284,7 +285,7 @@ export class DrillScene extends Phaser.Scene {
             });
             this.time.delayedCall(350 + demo.taps.length * 700 + 1500, loop);
         };
-        hand.setPosition(w / 2, cy + 190);
+        hand.setPosition(w / 2, cy + 220);
         loop();
 
         const start = () => {
@@ -398,7 +399,7 @@ export class DrillScene extends Phaser.Scene {
         let key;
         let color;
         if (data.kind === 'num') {
-            color = COLORS.numbers[data.value % COLORS.numbers.length];
+            color = COLORS.numbers[Math.abs(Math.round(data.value)) % COLORS.numbers.length] || COLORS.numbers[0];
             key = `drill_n${data.value}`;
             if (!this.textures.exists(key)) bakeLabelPiece(this, key, String(data.value), color);
         } else {
