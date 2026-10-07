@@ -366,62 +366,148 @@ function drawFlameIcon(ctx, c) {
     ctx.restore();
 }
 
-// Junk ("trambolho"): a heavy grey rock. hp 3 = whole, then cracks spread until it breaks.
-const JUNK_SPOTS = [[-0.35, -0.3, 0.16], [0.3, -0.42, 0.11], [0.42, 0.2, 0.14], [-0.2, 0.38, 0.12], [0.05, 0.05, 0.09]];
-const JUNK_CRACKS = [
-    [[-0.05, -0.95], [0.1, -0.45], [-0.12, -0.1], [0.08, 0.3]],
-    [[0.9, 0.1], [0.45, 0.05], [0.25, 0.32], [0.38, 0.7]],
-    [[-0.9, -0.2], [-0.5, -0.05], [-0.3, 0.3], [-0.55, 0.7]],
-    [[0.1, -0.45], [0.45, -0.55]],
-    [[-0.12, -0.1], [-0.5, -0.4]]
-];
+// Junk ("trambolho"): a heavy square steel block. hp 3 = new; 2 = dented and scratched;
+// 1 = a bent corner, a rivet gone and a split in the plate. Drawn once per state (no runtime cost).
+export const JUNK_SIDE = Math.round(DIAMETER * 0.9);
 
-function drawJunk(ctx, c, hp, style = {}) {
-    const g = ctx.createRadialGradient(c - R * 0.3, c - R * 0.35, R * 0.1, c, c, R);
-    g.addColorStop(0, '#9a9aa8');
-    g.addColorStop(0.6, '#5f5f6e');
-    g.addColorStop(1, '#34343f');
+function drawIron(ctx, c, hp, style = {}) {
+    const h = JUNK_SIDE / 2;
+    const x0 = c - h;
+    const y0 = c - h;
+    const side = JUNK_SIDE;
+    const bevel = 7;
+
+    // Plate: cool steel gradient
+    const g = ctx.createLinearGradient(x0, y0, x0 + side, y0 + side);
+    g.addColorStop(0, '#8d97a6');
+    g.addColorStop(0.45, '#5d6674');
+    g.addColorStop(1, '#3a414c');
     ctx.fillStyle = g;
-    circleFill(ctx, c, R);
+    roundRectPath(ctx, x0, y0, side, side, 6);
     ctx.fill();
-    ctx.lineWidth = style.hc ? 6 : 3.5;
-    ctx.strokeStyle = style.hc ? '#ffffff' : 'rgba(10,4,20,0.85)';
-    ctx.stroke();
-    // pitted surface
-    for (const [x, y, r] of JUNK_SPOTS) {
-        ctx.fillStyle = 'rgba(30,30,40,0.45)';
+
+    // Brushed metal: fine diagonal streaks
+    ctx.save();
+    roundRectPath(ctx, x0, y0, side, side, 6);
+    ctx.clip();
+    for (let i = -side; i < side * 2; i += 3) {
+        ctx.strokeStyle = i % 9 === 0 ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(c + x * R, c + y * R, r * R, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.12)';
-        ctx.beginPath();
-        ctx.arc(c + x * R - 1.5, c + y * R - 1.5, r * R * 0.6, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(x0 + i, y0);
+        ctx.lineTo(x0 + i - side * 0.35, y0 + side);
+        ctx.stroke();
     }
-    // heavy weight marker so it reads as "not a number"
-    ctx.save();
-    ctx.fillStyle = 'rgba(20,20,28,0.55)';
-    ctx.font = `bold ${Math.round(R * 0.62)}px Arial, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('✕', c, c + 2);
     ctx.restore();
-    // cracks: more of them as hp drops
-    const n = hp >= 3 ? 0 : hp === 2 ? 2 : 5;
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (let k = 0; k < n; k++) {
-        const pts = JUNK_CRACKS[k];
-        [[4, 'rgba(10,8,16,0.9)'], [1.5, 'rgba(255,220,170,0.55)']].forEach(([w, col]) => {
-            ctx.lineWidth = w;
+
+    // Bevel: light top-left edges, dark bottom-right edges
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x0 + side, y0); ctx.lineTo(x0 + side - bevel, y0 + bevel);
+    ctx.lineTo(x0 + bevel, y0 + bevel); ctx.lineTo(x0 + bevel, y0 + side - bevel); ctx.lineTo(x0, y0 + side);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.beginPath();
+    ctx.moveTo(x0 + side, y0); ctx.lineTo(x0 + side, y0 + side); ctx.lineTo(x0, y0 + side);
+    ctx.lineTo(x0 + bevel, y0 + side - bevel); ctx.lineTo(x0 + side - bevel, y0 + side - bevel);
+    ctx.lineTo(x0 + side - bevel, y0 + bevel);
+    ctx.closePath();
+    ctx.fill();
+
+    // X brace across the inner panel
+    const i0 = x0 + bevel + 3;
+    const i1 = x0 + side - bevel - 3;
+    const j0 = y0 + bevel + 3;
+    const j1 = y0 + side - bevel - 3;
+    [[i0, j0, i1, j1], [i1, j0, i0, j1]].forEach(([ax, ay, bx, by]) => {
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.lineWidth = 7;
+        ctx.beginPath(); ctx.moveTo(ax, ay + 1.5); ctx.lineTo(bx, by + 1.5); ctx.stroke();
+        ctx.strokeStyle = '#6f7887';
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(ax, ay - 1.5); ctx.lineTo(bx, by - 1.5); ctx.stroke();
+    });
+
+    // Rivets (one pops off at hp 1)
+    const rivets = [[x0 + 8, y0 + 8], [x0 + side - 8, y0 + 8], [x0 + 8, y0 + side - 8], [x0 + side - 8, y0 + side - 8]];
+    rivets.forEach(([rx, ry], k) => {
+        if (hp <= 1 && k === 1) {
+            ctx.fillStyle = '#15181d';
+            ctx.beginPath(); ctx.arc(rx, ry, 2.6, 0, Math.PI * 2); ctx.fill();
+            return;
+        }
+        const rg = ctx.createRadialGradient(rx - 1, ry - 1, 0.5, rx, ry, 3.6);
+        rg.addColorStop(0, '#e6ebf2');
+        rg.addColorStop(0.5, '#8d97a6');
+        rg.addColorStop(1, '#2c3139');
+        ctx.fillStyle = rg;
+        ctx.beginPath(); ctx.arc(rx, ry, 3.6, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // Damage
+    const dent = (dx, dy, rx, ry, rot) => {
+        ctx.save();
+        ctx.translate(c + dx, c + dy);
+        ctx.rotate(rot);
+        const dg = ctx.createRadialGradient(-rx * 0.3, -ry * 0.3, 0, 0, 0, Math.max(rx, ry));
+        dg.addColorStop(0, 'rgba(10,12,16,0.55)');
+        dg.addColorStop(0.7, 'rgba(10,12,16,0.25)');
+        dg.addColorStop(1, 'rgba(10,12,16,0)');
+        ctx.fillStyle = dg;
+        ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+        ctx.restore();
+    };
+    const scratch = (ax, ay, bx, by) => {
+        ctx.strokeStyle = 'rgba(230,236,245,0.55)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(c + ax, c + ay); ctx.lineTo(c + bx, c + by); ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+        ctx.beginPath(); ctx.moveTo(c + ax + 1, c + ay + 1); ctx.lineTo(c + bx + 1, c + by + 1); ctx.stroke();
+    };
+    if (hp <= 2) {
+        dent(-10, 9, 9, 6, 0.4);
+        dent(12, -11, 7, 5, -0.6);
+        scratch(-20, -6, -6, -18);
+        scratch(4, 16, 20, 6);
+    }
+    if (hp <= 1) {
+        dent(6, 6, 11, 8, 0.9);
+        // Split in the plate with a hot glow inside
+        const split = [[-h + 2, -4], [-12, -1], [-6, 5], [2, 2], [9, 9], [h - 3, 7]];
+        ctx.lineJoin = 'round';
+        [[5, 'rgba(10,8,8,0.95)'], [2.2, 'rgba(255,120,40,0.9)'], [0.8, 'rgba(255,230,160,0.9)']].forEach(([w, col]) => {
             ctx.strokeStyle = col;
+            ctx.lineWidth = w;
             ctx.beginPath();
-            pts.forEach(([x, y], i) => (i ? ctx.lineTo(c + x * R, c + y * R) : ctx.moveTo(c + x * R, c + y * R)));
+            split.forEach(([x, y], k) => (k ? ctx.lineTo(c + x, c + y) : ctx.moveTo(c + x, c + y)));
             ctx.stroke();
         });
+        // Bent top-right corner
+        ctx.fillStyle = '#2a2f37';
+        ctx.beginPath();
+        ctx.moveTo(x0 + side - 15, y0); ctx.lineTo(x0 + side, y0); ctx.lineTo(x0 + side, y0 + 15);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#a3adbb';
+        ctx.beginPath();
+        ctx.moveTo(x0 + side - 15, y0); ctx.lineTo(x0 + side, y0 + 15); ctx.lineTo(x0 + side - 11, y0 + 11);
+        ctx.closePath();
+        ctx.fill();
     }
-    ctx.restore();
+
+    // Outline
+    ctx.lineWidth = style.hc ? 5 : 3;
+    ctx.strokeStyle = style.hc ? '#ffffff' : 'rgba(10,6,18,0.9)';
+    roundRectPath(ctx, x0, y0, side, side, 6);
+    ctx.stroke();
 }
 
 function drawClock(ctx, c) {
@@ -557,6 +643,17 @@ export function ensureTextures(scene) {
         ctx.fillRect(0, 0, 256, 256);
     });
 
+    // Steel shard for breaking junk (tinted per particle)
+    canvasTexture(scene, 'shard', 10, 6, (ctx) => {
+        ctx.fillStyle = '#c9d1dc';
+        ctx.beginPath();
+        ctx.moveTo(0, 1); ctx.lineTo(10, 0); ctx.lineTo(8, 6); ctx.lineTo(1, 5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.fillRect(1, 1, 8, 1);
+    });
+
     // Steam puff for melting ice
     canvasTexture(scene, 'steam', 32, 32, (ctx) => {
         const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
@@ -652,7 +749,7 @@ function bakePieces(scene, prefix, style) {
         drawRecycleIcon(ctx, c);
     });
     for (let hp = 1; hp <= 3; hp++) {
-        canvasTexture(scene, `${prefix}junk_${hp}`, S, S, (ctx) => drawJunk(ctx, c, hp, style));
+        canvasTexture(scene, `${prefix}junk_${hp}`, S, S, (ctx) => drawIron(ctx, c, hp, style));
     }
     canvasTexture(scene, `${prefix}special_heat`, S, S, (ctx) => {
         drawBall(ctx, c, COLORS.specials.heat, style);

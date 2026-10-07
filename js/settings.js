@@ -6,7 +6,6 @@ const DEFAULTS = {
     highContrast: false,   // thick outlines + bigger, bolder labels on the pieces
     reduceMotion: false,   // no camera shake / flash, calmer backgrounds
     // Gameplay options being tested (settings > TESTS)
-    inputMode: 'tap',      // 'tap' or 'drag' (swipe through 2 numbers + 1 operator, solve on release)
     teachErrors: true,     // a wrong equation shows what it actually makes
     energy: false,         // correct equations fill a bar that lets you pick a special piece
     junk: true             // a wrong equation drops 2 heavy junk pieces

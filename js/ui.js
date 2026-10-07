@@ -248,18 +248,12 @@ export function openTests(scene, { depth = 760 } = {}) {
         const first = !m;
         if (m) m.close();
         const ROW = 54;
-        m = modal(scene, { depth, height: 96 + 44 + ROW * 4 + 76, title: t('testsTitle'), fade: first });
+        m = modal(scene, { depth, height: 96 + 44 + ROW * 3 + 76, title: t('testsTitle'), fade: first });
         const { panel } = m;
         m.add(scene.add.text(panel.cx, panel.y + 84, t('testsNote'), {
             fontFamily: 'Roboto', fontSize: '13px', color: '#a5a8dd', align: 'center', wordWrap: { width: panel.w - 40 }
         }).setOrigin(0.5).setDepth(m.depth));
         let y = panel.y + 136;
-        const drag = settings.get('inputMode') === 'drag';
-        toggleRow(scene, m, y, t('inputMode'), drag ? t('drag') : t('tap'), true, () => {
-            settings.set('inputMode', drag ? 'tap' : 'drag');
-            render();
-        });
-        y += ROW;
         [['teachErrors', 'teachErrors'], ['energy', 'energyBar'], ['junk', 'junkPieces']].forEach(([key, label]) => {
             const on = !!settings.get(key);
             toggleRow(scene, m, y, t(label), on ? t('on') : t('off'), on, () => {

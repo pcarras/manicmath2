@@ -25,6 +25,8 @@ const ASSETS = [
     './js/ranking.js',
     './js/namefilter.js',
     './js/nameDialog.js',
+    './js/sfx.js',
+    './js/title.js',
     './js/scenes/AchievementsScene.js',
     './js/scenes/GameScene.js',
     './js/scenes/MenuScene.js',

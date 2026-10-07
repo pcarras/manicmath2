@@ -8,6 +8,9 @@ import { chunkyButton, roundButton, openSettings, modal } from '../ui.js';
 import { view, setupCamera } from '../display.js';
 import { beans, onProgressChange, streakInfo, missions, missionText } from '../progress.js';
 import { modeBest } from '../stats.js';
+import { syncBests } from '../ranking.js';
+import { ensureTextures } from '../textures.js';
+import { createTitle, createPieceRain } from '../title.js';
 
 export class MenuScene extends Phaser.Scene {
     constructor() {
@@ -20,78 +23,35 @@ export class MenuScene extends Phaser.Scene {
         const top = safeAreaTop();
 
         createStarfield(this);
-        const titleSize = `${Math.min(62, Math.floor((w - 32) / 6.4))}px`;
+        syncBests();
+        ensureTextures(this);
+        const calm = settings.get('reduceMotion');
+        if (!calm) createPieceRain(this, w, h);
 
-        // Floating math symbols in background (off with "less motion")
-        const symbols = ['1', '2', '3', '+', '-', '×', '÷', '=', '7', '9'];
-        for (let i = 0; i < (settings.get('reduceMotion') ? 0 : 12); i++) {
-            const sym = this.add.text(
-                Phaser.Math.Between(20, w - 20),
-                Phaser.Math.Between(50, h - 50),
-                Phaser.Utils.Array.GetRandom(symbols),
-                {
-                    fontFamily: 'Righteous',
-                    fontSize: Phaser.Math.Between(18, 36) + 'px',
-                    color: '#ffffff'
-                }
-            ).setOrigin(0.5).setAlpha(0.04).setDepth(0);
+        // Animated title: the full drop-in plays once per session, later visits just fade in
+        const size = Math.min(84, Math.floor((w - 40) / 4.3), Math.floor(h * 0.105));
+        const short = h < 720;   // small screens drop the subtitle to keep the buttons roomy
+        const firstTime = !this.registry.get('titleShown');
+        this.registry.set('titleShown', true);
+        const titleBottom = createTitle(this, w / 2, top + Math.max(short ? 82 : 92, h * 0.13), size, { intro: firstTime, calm });
 
-            this.tweens.add({
-                targets: sym,
-                y: sym.y - Phaser.Math.Between(30, 80),
-                alpha: 0.08,
-                duration: Phaser.Math.Between(3000, 6000),
-                yoyo: true,
-                repeat: -1,
-                ease: 'Sine.easeInOut',
-                delay: Phaser.Math.Between(0, 3000)
-            });
-        }
-
-        // Chunky outlined title with a soft glow behind it
-        const titleY = top + h * 0.2;
-        const titleGlow = this.add.text(w / 2, titleY, 'MANIC MATH', {
-            fontFamily: 'Righteous',
-            fontSize: titleSize,
-            color: '#6366f1',
-            shadow: { offsetX: 0, offsetY: 0, color: '#6366f1', blur: 30, fill: true }
-        }).setOrigin(0.5).setAlpha(0.4).setDepth(1);
-
-        const title = this.add.text(w / 2, titleY, 'MANIC MATH', {
-            fontFamily: 'Righteous',
-            fontSize: titleSize,
-            color: '#ffffff',
-            stroke: '#1b0f2e',
-            strokeThickness: 8,
-            shadow: { offsetX: 0, offsetY: 6, color: '#7b2cbf', blur: 0, fill: true, stroke: true }
-        }).setOrigin(0.5).setDepth(2);
-
-        title.setScale(0.3).setAlpha(0);
-        titleGlow.setScale(0.3).setAlpha(0);
-        this.tweens.add({
-            targets: [title, titleGlow],
-            scaleX: 1, scaleY: 1, alpha: { getEnd: (target) => (target === title ? 1 : 0.4) },
-            duration: 600,
-            ease: 'Back.easeOut'
-        });
-        this.tweens.add({
-            targets: titleGlow, alpha: 0.6, duration: 2000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay: 600
-        });
-
-        const subtitle = this.add.text(w / 2, titleY + h * 0.08, t('subtitle'), {
+        const subtitle = this.add.text(w / 2, titleBottom + 14, t('subtitle'), {
             fontFamily: 'Roboto',
-            fontSize: '19px',
-            color: '#a5a8dd'
-        }).setOrigin(0.5).setDepth(2).setAlpha(0);
-        this.tweens.add({ targets: subtitle, alpha: 1, duration: 500, delay: 400 });
+            fontSize: '18px',
+            color: '#c4c6f5'
+        }).setOrigin(0.5).setDepth(3).setAlpha(0);
+        if (short) subtitle.setVisible(false);
+        else this.tweens.add({ targets: subtitle, alpha: 1, duration: 500, delay: firstTime ? 1100 : 200 });
+        let contentBottom = short ? titleBottom - 6 : titleBottom + 26;
 
         // Personal best
         const best = stats.get().best;
         if (best > 0) {
-            const bestText = this.add.text(w / 2, titleY + h * 0.08 + 32, `🏆 ${t('best')}  ${best}`, {
+            const bestText = this.add.text(w / 2, short ? titleBottom + 14 : titleBottom + 44, `🏆 ${t('best')}  ${best}`, {
                 fontFamily: 'Righteous', fontSize: '18px', color: '#ffd23f', stroke: '#1b0f2e', strokeThickness: 5
-            }).setOrigin(0.5).setDepth(2).setAlpha(0);
-            this.tweens.add({ targets: bestText, alpha: 1, duration: 500, delay: 500 });
+            }).setOrigin(0.5).setDepth(3).setAlpha(0);
+            this.tweens.add({ targets: bestText, alpha: 1, duration: 500, delay: firstTime ? 1200 : 250 });
+            contentBottom = short ? titleBottom + 26 : titleBottom + 56;
         }
 
         // Achievements (top left)
@@ -127,10 +87,12 @@ export class MenuScene extends Phaser.Scene {
         };
         this.go = go;
         const bw = Math.min(250, w - 64);
-        let y = top + h * 0.4;
+        let y = Math.max(top + h * 0.4, contentBottom + 46);
         const gap = Math.min(80, (h - 70 - y) / 4.6);
-        chunkyButton(this, w / 2, y, t('play'), 0x22c55e,
+        const playBtn = chunkyButton(this, w / 2, y, t('play'), 0x22c55e,
             go('GameScene', () => ({ tutorial: !settings.get('tutorialDone') })), { width: bw, height: 66, fontSize: 32, delay: 200 });
+        // The main call to action breathes gently
+        if (!calm) this.tweens.add({ targets: playBtn, scale: 1.045, duration: 900, yoyo: true, repeat: -1, delay: 1400, ease: 'Sine.easeInOut' });
         y += gap + 8;
 
         // Daily challenge, with the streak and today's best underneath

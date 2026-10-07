@@ -1,6 +1,7 @@
 
 import { COLORS, CONSTANTS, PIECE_BODY, LEVELS, SCORING } from '../constants.js';
-import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX } from '../textures.js';
+import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX, JUNK_SIDE } from '../textures.js';
+import { Sfx } from '../sfx.js';
 import { INV, RES, view, setupCamera } from '../display.js';
 import { createStarfield } from '../starfield.js';
 import { safeAreaTop } from '../pwa.js';
@@ -20,8 +21,6 @@ const {
 
 const OPS = ['+', '-', '×', '÷'];
 const TAP_RADIUS_SQ = (R * 1.2) ** 2;
-// While swiping, only the middle of a piece catches the finger, so passing near a piece does not pick it
-const SWIPE_RADIUS_SQ = (R * 0.7) ** 2;
 
 function calc(a, op, b) {
     switch (op) {
@@ -54,10 +53,7 @@ export class GameScene extends Phaser.Scene {
         this.solvedOps = [];               // operator of each equation, for the share grid
         this.beansEarned = 0;              // coffee beans won during this game (paid as they come)
         // Options being tested (settings > TESTS), fixed for the whole game
-        this.dragMode = !this.tutorial && settings.get('inputMode') === 'drag';
         this.energyOn = !this.tutorial && !!settings.get('energy');
-        this.dragging = false;
-        this.chain = [];                   // pieces picked in the current swipe, in order
         this.energy = 0;                   // 0..1
         this.chooser = null;
         this.pieceRng = this.daily ? new Phaser.Math.RandomDataGenerator([`mm-${this.dailyKey}-pieces`]) : null;
@@ -111,7 +107,6 @@ export class GameScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.audio('bgMusic', ['sounds/soundtrack3.ogg', 'sounds/soundtrack3.wav']);
         this.load.audio('explosionSound', 'sounds/explosion1.mp3');
         this.load.audio('clickbutton', 'sounds/clickbutton.mp3');
         this.load.audio('timeSound', 'sounds/snd_time.mp3');
@@ -155,16 +150,14 @@ export class GameScene extends Phaser.Scene {
         if (this.tutorial) this.hand = this.add.image(0, 0, 'hand').setDepth(160).setVisible(false).setScale(INV);
 
         this.input.on('pointerdown', this.onPointerDown, this);
-        if (this.dragMode) {
-            this.chainGfx = this.add.graphics().setDepth(13).setBlendMode(Phaser.BlendModes.ADD);
-            this.input.on('pointermove', this.onPointerMove, this);
-            this.input.on('pointerup', this.onPointerUp, this);
-            this.input.on('pointerupoutside', this.onPointerUp, this);
-        }
+
 
         this.sound.stopAll();
-        // Original soundtrack at levels 1-2, procedural chiptune tracks after (see music.js)
+        // Synthesized tracks that speed up with the levels (see music.js)
         this.music = new MusicDirector(this);
+        this.sfx = new Sfx(this);
+        this.beanChain = 0;
+        this.lastBeanAt = 0;
         this.music.setLevel(this.level);
 
         // Auto-pause when the app goes to the background (call, notification, app switch)
@@ -179,6 +172,7 @@ export class GameScene extends Phaser.Scene {
             clearTimeout(this.hudTimer);
             offSettings();
             if (this.music) this.music.stop();
+            if (this.sfx) this.sfx.stopAll();
         });
 
         if (this.tutorial) {
@@ -290,13 +284,20 @@ export class GameScene extends Phaser.Scene {
         }).setOrigin(0.5, 0).setDepth(101));
         this.nextIcon = hud(this.add.image(nextX, top + 36, '__DEFAULT').setScale(24 / TEX_PX).setDepth(101));
 
-        // Equation slots: [NUM] [OP] [NUM] = TARGET, centred
+        // Equation slots: [NUM] [OP] [NUM] = TARGET, centred. Inset look + a faint hint of what goes in each.
         this.slotPos.forEach((pos, i) => {
             const g = hud(this.add.graphics().setDepth(101));
             g.fillStyle(0x070818, 1);
             g.fillRoundedRect(pos.x - s / 2, pos.y - s / 2, s, s, s * 0.24);
-            g.lineStyle(2, 0x3a3a6e, 0.8);
+            g.fillStyle(0x000000, 0.45);
+            g.fillRoundedRect(pos.x - s / 2, pos.y - s / 2, s, s * 0.22, { tl: s * 0.24, tr: s * 0.24, bl: 0, br: 0 });
+            g.lineStyle(2, 0x4a4a8e, 0.9);
             g.strokeRoundedRect(pos.x - s / 2, pos.y - s / 2, s, s, s * 0.24);
+            g.lineStyle(1, 0xffffff, 0.08);
+            g.lineBetween(pos.x - s / 2 + s * 0.24, pos.y + s / 2 - 1, pos.x + s / 2 - s * 0.24, pos.y + s / 2 - 1);
+            hud(this.add.text(pos.x, pos.y, i === 1 ? '±' : '?', {
+                fontFamily: 'Righteous', fontSize: `${Math.round(s * 0.5)}px`, color: '#8b8bd8'
+            }).setOrigin(0.5).setAlpha(0.22).setDepth(101));
         });
 
         hud(this.add.text(this.equalsX, this.eqY, '=', {
@@ -314,11 +315,27 @@ export class GameScene extends Phaser.Scene {
         this.timerBadge = hud(this.createBadge(w - 92, 'piece_special_timer', '#60a5fa'));
         this.hintBadge = hud(this.createBadge(w - 152, 'piece_special_hint', '#34D399'));
 
-        // Death line + red edge glow when the pile gets close
+        // Playfield: a dark glass tank with neon edges and a lit floor, so the pile sits in something
+        const field = hud(this.add.graphics().setDepth(2));
+        const fy = this.deathY + 2;
+        field.fillStyle(0x0a0c22, 0.38);
+        field.fillRoundedRect(4, fy, w - 8, h - fy + 20, 18);
+        field.lineStyle(2, 0x6366f1, 0.22);
+        field.strokeRoundedRect(4, fy, w - 8, h - fy + 20, 18);
+        field.lineStyle(6, 0x6366f1, 0.06);
+        field.strokeRoundedRect(4, fy, w - 8, h - fy + 20, 18);
+        if (this.textures.exists('nebula')) {
+            hud(this.add.image(w / 2, h + 30, 'nebula').setTint(0x6d5bff).setDisplaySize(w * 1.4, 220)
+                .setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.32).setDepth(3));
+        }
+
+        // Death line with a soft red glow + red edge glow when the pile gets close
         this.dangerLine = hud(this.add.graphics().setDepth(99));
-        this.dangerLine.lineStyle(2, 0xef4444, 1);
-        for (let x = 12; x < w - 12; x += 18) this.dangerLine.lineBetween(x, this.deathY, x + 9, this.deathY);
-        this.dangerLine.setAlpha(0.15);
+        this.dangerLine.lineStyle(8, 0xef4444, 0.18);
+        this.dangerLine.lineBetween(12, this.deathY, w - 12, this.deathY);
+        this.dangerLine.lineStyle(2.5, 0xff6b6b, 1);
+        for (let x = 12; x < w - 12; x += 18) this.dangerLine.lineBetween(x, this.deathY, x + 10, this.deathY);
+        this.dangerLine.setAlpha(0.4);
         this.vignette = hud(this.add.image(w / 2, h / 2, 'vignette').setDisplaySize(w, h).setDepth(95).setAlpha(0));
 
         // Blue tint while the timer power-up holds the spawn
@@ -385,6 +402,17 @@ export class GameScene extends Phaser.Scene {
             emitting: false
         }).setDepth(200);
 
+        // Steel shards when junk breaks
+        this.shards = this.add.particles(0, 0, 'shard', {
+            speed: { min: 140, max: 380 },
+            rotate: { start: 0, end: 720 },
+            scale: { min: 0.9, max: 1.7 },
+            lifespan: 900,
+            gravityY: 800,
+            tint: [0xc9d1dc, 0x8d97a6, 0x5d6674],
+            emitting: false
+        }).setDepth(200);
+
         // Steam rising off melting ice
         this.steamFx = this.add.particles(0, 0, 'steam', {
             speedY: { min: -90, max: -40 },
@@ -419,6 +447,7 @@ export class GameScene extends Phaser.Scene {
             const pos = p.body.position;
             p.img.x = pos.x;
             p.img.y = pos.y;
+            if (p.type === 'junk') p.img.rotation = p.body.angle;
             if (p.ice) {
                 p.ice.x = pos.x;
                 p.ice.y = pos.y;
@@ -448,8 +477,6 @@ export class GameScene extends Phaser.Scene {
                 this.hand.setVisible(false);
             }
         }
-
-        if (this.dragging) this.drawChain();
 
         if (this.needsWake) {
             for (let i = 0; i < pieces.length; i++) this.Sleeping.set(pieces[i].body, false);
@@ -565,7 +592,7 @@ export class GameScene extends Phaser.Scene {
         }
 
         if (near && !this.dangerTween) {
-            this.dangerLine.setAlpha(0.15);
+            this.dangerLine.setAlpha(0.4);
             this.vignette.setAlpha(0);
             this.dangerTween = this.tweens.add({
                 targets: [this.dangerLine, this.vignette], alpha: 0.85, duration: 380, yoyo: true, repeat: -1,
@@ -575,7 +602,7 @@ export class GameScene extends Phaser.Scene {
         } else if (!near && this.dangerTween) {
             this.dangerTween.remove();
             this.dangerTween = null;
-            this.dangerLine.setAlpha(0.15);
+            this.dangerLine.setAlpha(0.4);
             this.vignette.setAlpha(0);
             this.music.setDanger(false);
         }
@@ -669,8 +696,10 @@ export class GameScene extends Phaser.Scene {
                     : COLORS.specials[data.special];
 
         // Junk is heavy: it sinks into the pile and shoves pieces aside
-        const bodyOpts = data.type === 'junk' ? { ...PIECE_BODY, density: 0.004, friction: 0.08 } : PIECE_BODY;
-        const body = this.matter.add.circle(x, y, R, { ...bodyOpts, label: 'piece' });
+        const body = data.type === 'junk'
+            ? this.matter.add.rectangle(x, y, JUNK_SIDE, JUNK_SIDE,
+                { ...PIECE_BODY, density: 0.005, friction: 0.12, frictionStatic: 0.5, chamfer: { radius: 6 }, label: 'piece' })
+            : this.matter.add.circle(x, y, R, { ...PIECE_BODY, label: 'piece' });
         this.Body.setVelocity(body, { x: Phaser.Math.FloatBetween(-1.2, 1.2), y: 3 });
 
         const img = this.add.image(x, y, pieceTextureKey(data)).setDepth(10).setScale(INV);
@@ -694,6 +723,7 @@ export class GameScene extends Phaser.Scene {
     removePiece(p) {
         if (!p.alive) return;
         p.alive = false;
+        this.clearFuse(p);
         this.matter.world.remove(p.body);
         this.tweens.killTweensOf(p.img);
         p.img.destroy();
@@ -741,86 +771,18 @@ export class GameScene extends Phaser.Scene {
                 best = p;
             }
         }
-        if (!best) return;
-        if (this.dragMode && !best.selected && best.type !== 'special' && best.type !== 'junk') {
-            this.dragging = true;
-            this.chain = [];
-        }
-        this.selectPiece(best);
-    }
-
-    pieceAt(x, y, radiusSq = TAP_RADIUS_SQ) {
-        let best = null;
-        let bestD = radiusSq;
-        for (const p of this.pieces) {
-            const dx = p.body.position.x - x;
-            const dy = p.body.position.y - y;
-            const d = dx * dx + dy * dy;
-            if (d < bestD) {
-                bestD = d;
-                best = p;
-            }
-        }
-        return best;
-    }
-
-    // Swipe: passing over a piece adds it if its slot is free; going back to the previous piece undoes
-    onPointerMove(pointer) {
-        if (!this.dragging || this.validating || this.paused || this.gameOver) return;
-        const p = this.pieceAt(pointer.worldX, pointer.worldY, SWIPE_RADIUS_SQ);
-        if (!p || p === this.chain[this.chain.length - 1]) return;
-        if (p === this.chain[this.chain.length - 2]) {
-            const last = this.chain.pop();
-            if (last.selected) this.deselect(last.slot);
-            this.playClick();
-            return;
-        }
-        if (p.selected || p.type === 'special' || p.type === 'junk') return;
-        const free = p.type === 'operator' ? !this.slots[1] : (!this.slots[0] || !this.slots[2]);
-        if (free) this.selectPiece(p);
-    }
-
-    // Solve on release; a partial swipe stays selected so it can be finished with taps
-    onPointerUp() {
-        if (!this.dragging) return;
-        this.dragging = false;
-        this.chain = [];
-        this.chainGfx.clear();
-        if (this.slots[0] && this.slots[1] && this.slots[2] && !this.validating) {
-            this.validating = true;
-            this.time.delayedCall(140, () => this.validate());
-        }
-    }
-
-    drawChain() {
-        const g = this.chainGfx;
-        g.clear();
-        const pts = this.chain.filter((p) => p.alive).map((p) => ({ x: p.img.x, y: p.img.y }));
-        if (pts.length === 0) return;
-        const ptr = this.input.activePointer;
-        if (this.chain.length < 3) pts.push({ x: ptr.worldX, y: ptr.worldY });
-        [[14, 0xffe066, 0.18], [7, 0xffe066, 0.45], [3, 0xffffff, 0.95]].forEach(([w, c, a]) => {
-            g.lineStyle(w, c, a);
-            g.beginPath();
-            g.moveTo(pts[0].x, pts[0].y);
-            for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
-            g.strokePath();
-        });
-        pts.slice(0, this.chain.length).forEach((q) => {
-            g.fillStyle(0xffffff, 0.9);
-            g.fillCircle(q.x, q.y, 6);
-        });
+        if (best) this.selectPiece(best);
     }
 
     selectPiece(p) {
         if (p.type === 'special') {
-            this.activateSpecial(p);
+            if (!p.lit) this.activateSpecial(p);
             return;
         }
         // Junk cannot be used: it just thuds
         if (p.type === 'junk') {
             this.tweens.add({ targets: p.img, scale: 0.9 * INV, duration: 70, yoyo: true });
-            this.playSound('impactSound', 0.5);
+            this.sfx.clank(1.2);
             haptic('tap');
             return;
         }
@@ -849,13 +811,9 @@ export class GameScene extends Phaser.Scene {
         p.selected = true;
         p.slot = slot;
         this.flyToSlot(p, slot);
-        if (this.dragging) {
-            this.chain.push(p);
-            haptic('tap');
-        }
         if (this.tutorial && p === this.tutTarget) this.tutorialStep(this.tutStep + 1);
 
-        if (this.slots[0] && this.slots[1] && this.slots[2] && !this.dragging) {
+        if (this.slots[0] && this.slots[1] && this.slots[2]) {
             this.validating = true;
             this.time.delayedCall(260, () => this.validate());
         }
@@ -927,6 +885,7 @@ export class GameScene extends Phaser.Scene {
 
     onSuccess() {
         this.playSound('popSound', 0.8);
+        this.sfx.rise(this.combo);   // combo before this equation: the chime climbs as the chain grows
         haptic('success');
         this.hitStop(70);
         this.scoreSuccess();
@@ -1013,28 +972,14 @@ export class GameScene extends Phaser.Scene {
             const x = R + 4 + Math.random() * (this.w - 2 * R - 8);
             const p = this.createPiece({ type: 'junk', hp: 3 }, x, -R * 2 - i * DIAMETER);
             this.Body.setVelocity(p.body, { x: 0, y: 6 });
+            this.Body.setAngularVelocity(p.body, Phaser.Math.FloatBetween(-0.05, 0.05));
         }
-        this.playSound('impactSound', 0.6);
+        this.time.delayedCall(450, () => this.sfx.clank(0.7));
     }
 
-    // Every correct equation cracks all junk; the third crack breaks it (small bonus)
+    // Every correct equation batters all steel junk one step; the third hit breaks it (+25)
     crackJunk() {
-        for (const p of [...this.pieces]) {
-            if (p.type !== 'junk') continue;
-            p.hp--;
-            const { x, y } = p.body.position;
-            this.burst.setParticleTint(0x9a9aa8);
-            if (p.hp <= 0) {
-                this.burst.emitParticleAt(x, y, 16);
-                this.sparks.emitParticleAt(x, y, 6);
-                this.removePiece(p);
-                this.addScore(25, x, y, 0xc0c7d6);
-            } else {
-                this.burst.emitParticleAt(x, y, 6);
-                p.img.setTexture(pieceTextureKey(p));
-                this.tweens.add({ targets: p.img, scale: 1.12 * INV, duration: 80, yoyo: true });
-            }
-        }
+        for (const p of [...this.pieces]) if (p.type === 'junk') this.damageJunk(p, 1);
     }
 
     // ------------------------------------------------------------------ energy bar (test option)
@@ -1230,6 +1175,12 @@ export class GameScene extends Phaser.Scene {
     // ------------------------------------------------------------------ specials
 
     activateSpecial(p) {
+        if (p.special === 'bomb') {
+            haptic('special');
+            if (!this.tutorial) this.toastMissions(track('special'));
+            this.lightFuse(p, 2000);
+            return;
+        }
         const { x, y } = p.body.position;
         this.burst.setParticleTint(p.color);
         this.burst.emitParticleAt(x, y, 12);
@@ -1261,11 +1212,20 @@ export class GameScene extends Phaser.Scene {
 
         let destroyed = 0;
         for (const q of [...this.pieces]) {
-            if (q.selected) continue;
+            if (q.selected || !q.alive) continue;
             const dx = q.body.position.x - x;
             const dy = q.body.position.y - y;
             const d = Math.hypot(dx, dy) || 1;
-            if (d < radius) {
+            const isBomb = q.type === 'special' && q.special === 'bomb';
+            if (d < radius && isBomb) {
+                // Chain reaction: a bomb in the blast lights up with a shorter fuse
+                if (!q.lit) this.lightFuse(q, 900);
+            } else if (d < radius && q.type === 'junk') {
+                // Steel survives the blast, one step more battered
+                this.damageJunk(q, 1);
+                this.Sleeping.set(q.body, false);
+                this.Body.setVelocity(q.body, { x: (dx / d) * 6, y: (dy / d) * 6 - 3 });
+            } else if (d < radius) {
                 this.sparks.emitParticleAt(q.body.position.x, q.body.position.y, 8);
                 this.removePiece(q);
                 destroyed++;
@@ -1287,7 +1247,7 @@ export class GameScene extends Phaser.Scene {
     // scrambles and changes. Bolts flicker (re-generated a few times) before the hits land.
     recycle(x, y) {
         this.playSound('sparksSound', 0.85);
-        const pool = Phaser.Utils.Array.Shuffle(this.pieces.filter((q) => !q.selected));
+        const pool = Phaser.Utils.Array.Shuffle(this.pieces.filter((q) => !q.selected && !q.lit));
         const hits = pool.slice(0, Math.min(pool.length, 5 + Math.floor(Math.random() * 3)));
         const ends = hits.map((q) => ({ x: q.body.position.x, y: q.body.position.y }));
         ends.push({ x: this.targetX, y: this.eqY });
@@ -1387,11 +1347,77 @@ export class GameScene extends Phaser.Scene {
         g.fillCircle(x2, y2, 9);
     }
 
+    // Bomb fuse: sparks fly from the wick, the bomb flashes faster and faster, hisses, then blows
+    lightFuse(p, ms) {
+        p.lit = true;
+        this.tweens.killTweensOf(p.img);
+        p.img.setScale(INV);
+        p.fuseFx = this.add.particles(0, 0, 'spark', {
+            speed: { min: 40, max: 160 },
+            angle: { min: 200, max: 340 },
+            scale: { start: 1.3, end: 0 },
+            lifespan: { min: 180, max: 380 },
+            gravityY: 260,
+            frequency: 22,
+            blendMode: 'ADD',
+            follow: p.img,
+            followOffset: { x: R * 0.8, y: -R * 0.8 }
+        }).setDepth(201);
+        p.fuseSound = this.sfx.fuse();
+        const start = this.time.now;
+        const blink = () => {
+            if (!p.alive) return;
+            const left = Math.max(0, ms - (this.time.now - start));
+            p.img.setTint(p.img.tintTopLeft === 0xffffff ? 0xff7a6a : 0xffffff);
+            this.tweens.add({ targets: p.img, scale: 1.12 * INV, duration: 60, yoyo: true });
+            p.fuseBlink = this.time.delayedCall(Math.max(60, left * 0.22), blink);
+        };
+        blink();
+        p.fuseTimer = this.time.delayedCall(ms, () => this.detonate(p));
+    }
+
+    clearFuse(p) {
+        if (p.fuseFx) p.fuseFx.destroy();
+        if (p.fuseSound) p.fuseSound.stop();
+        if (p.fuseTimer) p.fuseTimer.remove();
+        if (p.fuseBlink) p.fuseBlink.remove();
+        p.fuseFx = p.fuseSound = p.fuseTimer = p.fuseBlink = null;
+    }
+
+    detonate(p) {
+        if (!p.alive || this.gameOver) return;
+        const { x, y } = p.body.position;
+        this.burst.setParticleTint(p.color);
+        this.burst.emitParticleAt(x, y, 12);
+        this.removePiece(p);
+        this.explode(x, y);
+    }
+
+    // Steel junk loses one state per hit; at zero it breaks into shards
+    damageJunk(p, n) {
+        if (!p.alive) return;
+        p.hp -= n;
+        const { x, y } = p.body.position;
+        this.sparks.emitParticleAt(x, y, 6);
+        if (p.hp <= 0) {
+            this.shards.emitParticleAt(x, y, 16);
+            this.sparks.emitParticleAt(x, y, 10);
+            this.sfx.metalBreak();
+            this.removePiece(p);
+            this.addScore(25, x, y, 0xc0c7d6);
+            return;
+        }
+        this.sfx.clank(p.hp === 2 ? 1 : 0.85);
+        this.shards.emitParticleAt(x, y, 3);
+        p.img.setTexture(pieceTextureKey(p));
+        this.tweens.add({ targets: p.img, scale: 1.1 * INV, duration: 70, yoyo: true });
+    }
+
     // Heat wave: hot rings expand from the piece; when the front reaches a frozen piece its ice
     // melts in a puff of steam. The ice grows back slowly after HEAT_THAW_MS.
     heatWave(x, y) {
-        this.playSound('sparksSound', 0.45);
-        this.playSound('timeSound', 0.35);
+        this.sfx.heat();
+        this.playSound('sparksSound', 0.3);
         const reach = Math.hypot(Math.max(x, this.w - x), Math.max(y, this.h - y)) + R;
         const travel = 950;
         for (let k = 0; k < 3; k++) {
@@ -1435,6 +1461,8 @@ export class GameScene extends Phaser.Scene {
 
     startTimerPowerUp() {
         this.playSound('timeSound', 0.8);
+        this.music.hold(true);
+        this.sfx.startTickTock();
         this.timerRemaining = TIMER_POWERUP_MS;
         this.lastTimerSecs = -1;
         this.timerBadge.setVisible(true);
@@ -1444,6 +1472,8 @@ export class GameScene extends Phaser.Scene {
 
     endTimerPowerUp() {
         this.timerRemaining = 0;
+        this.sfx.stopTickTock();
+        if (!this.gameOver) this.music.hold(false);
         this.spawnTimer = 0;
         this.timerBadge.setVisible(false);
         this.tweens.killTweensOf(this.timerOverlay);
@@ -1521,6 +1551,10 @@ export class GameScene extends Phaser.Scene {
     // Coffee beans are banked straight away (quitting mid-game keeps them)
     earnBeans(n, x, y) {
         const won = this.zen ? Math.ceil(n / 2) : n;
+        // The bling climbs while beans keep coming without a long pause
+        this.beanChain = this.time.now - this.lastBeanAt < 6000 ? this.beanChain + 1 : 0;
+        this.lastBeanAt = this.time.now;
+        this.time.delayedCall(140, () => this.sfx.coin(this.beanChain));
         this.beansEarned += won;
         addBeans(won);
         const label = this.add.text(x, y, t('beanPlus', { n: won }), {
@@ -1545,6 +1579,9 @@ export class GameScene extends Phaser.Scene {
         this.time.paused = true;
         this.sound.pauseAll();
         this.music.pause();
+        this.sfx.stopTickTock();
+        this.sfx.pauseLoops();
+        this.pieces.forEach((p) => p.fuseFx && p.fuseFx.pause());
         this.showPauseMenu();
     }
 
@@ -1603,6 +1640,9 @@ export class GameScene extends Phaser.Scene {
             this.sound.resumeAll();
             this.matter.world.resume();
             this.music.resume();
+            this.sfx.resumeLoops();
+            this.pieces.forEach((p) => p.fuseFx && p.fuseFx.resume());
+            if (this.timerRemaining > 0) this.sfx.startTickTock();
         });
     }
 
@@ -1861,6 +1901,7 @@ export class GameScene extends Phaser.Scene {
 
     showLevelUp(newOp) {
         this.playSound('bonusSound', 0.8);
+        this.sfx.fanfare();
         haptic('levelUp');
         const cy = this.h * 0.42;
         const title = this.add.text(this.w / 2, cy, t('levelUp', { n: this.level }), {
@@ -2026,12 +2067,10 @@ export class GameScene extends Phaser.Scene {
             this.chooser.destroy();
             this.chooser = null;
         }
-        if (this.dragging) {
-            this.dragging = false;
-            this.chainGfx.clear();
-        }
         this.matter.world.pause();
         this.music.stop();
+        this.sfx.stopAll();
+        this.pieces.forEach((p) => this.clearFuse(p));
         haptic('gameOver');
 
         let result;
@@ -2102,7 +2141,14 @@ export class GameScene extends Phaser.Scene {
         const counter = { v: 0 };
         this.tweens.add({
             targets: counter, v: this.score, duration: 900, delay: 500, ease: 'Cubic.easeOut',
-            onUpdate: () => scoreText.setText(String(Math.round(counter.v)))
+            onUpdate: () => {
+                scoreText.setText(String(Math.round(counter.v)));
+                const now = performance.now();
+                if (this.score > 0 && now - (this.lastCountTick || 0) > 55) {
+                    this.lastCountTick = now;
+                    this.sfx.count(counter.v / this.score);
+                }
+            }
         });
 
         // Record line: celebration for a new best, otherwise the best to beat

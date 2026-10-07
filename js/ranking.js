@@ -1,5 +1,6 @@
 // Daily ranking client + Wordle-style result sharing.
 import { player } from './progress.js';
+import { stats, modeBest } from './stats.js';
 import { t, lang } from './i18n.js';
 
 const API = 'api/leaderboard';
@@ -33,6 +34,23 @@ export async function submitScore(board, score, date) {
         body: JSON.stringify({ board, date, id: p.id, score, ...who })
     });
     return r;
+}
+
+// Personal bests saved on the phone before the classic / sprint rankings existed (or while
+// offline) are sent once, so the ranking always reflects the best ever played on this device.
+const SYNC_KEY = 'mm-synced';
+
+export async function syncBests() {
+    let synced = {};
+    try { synced = JSON.parse(localStorage.getItem(SYNC_KEY) || '{}'); } catch { /* reset */ }
+    const bests = { classic: stats.get().best, sprint: modeBest.get('sprint') };
+    for (const [board, best] of Object.entries(bests)) {
+        if (!(best > 0) || best <= (synced[board] || 0)) continue;
+        const r = await submitScore(board, best);
+        if (!r.ok) return;   // offline / not configured: try again next time
+        synced[board] = best;
+        try { localStorage.setItem(SYNC_KEY, JSON.stringify(synced)); } catch { /* private mode */ }
+    }
 }
 
 const OP_EMOJI = { '+': '🟪', '-': '🟩', '×': '🟧', '÷': '🟦' };
