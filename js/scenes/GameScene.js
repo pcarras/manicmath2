@@ -2,6 +2,7 @@
 import { COLORS, CONSTANTS, PIECE_BODY, LEVELS, SCORING } from '../constants.js';
 import { ensureTextures, preloadPieceAssets, pieceTextureKey, TEX_PX, JUNK_SIDE, SHEEN_FRAMES } from '../textures.js';
 import { Sfx } from '../sfx.js';
+import { DRILLS } from '../drills.js';
 import { INV, RES, view, setupCamera } from '../display.js';
 import { createStarfield } from '../starfield.js';
 import { safeAreaTop, safeAreaBottom } from '../pwa.js';
@@ -1649,6 +1650,30 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
+    // Bonus round: this scene pauses (physics, timers, tweens) and a drill runs on top of it
+    startBonus() {
+        if (this.gameOver || this.paused || this.inBonus) return;
+        this.inBonus = true;
+        for (let i = 0; i < 3; i++) this.deselect(i);
+        this.sfx.stopTickTock();
+        this.sfx.pauseLoops();
+        const d = Phaser.Utils.Array.GetRandom(DRILLS);
+        this.scene.pause();
+        this.scene.launch('DrillScene', { id: d.id, bonus: true });
+    }
+
+    // Called by DrillScene when the bonus round ends
+    bonusDone(points) {
+        this.inBonus = false;
+        this.scene.resume();
+        this.sfx.resumeLoops();
+        if (this.timerRemaining > 0) this.sfx.startTickTock();
+        if (points > 0) {
+            this.addScore(points, this.w / 2, this.h * 0.42, 0xffd23f);
+            this.earnBeans(Math.max(1, Math.round(points / 300)), this.w / 2, this.h * 0.42 + 40);
+        }
+    }
+
     // Coffee beans are banked straight away (quitting mid-game keeps them)
     earnBeans(n, x, y) {
         const won = this.zen ? Math.ceil(n / 2) : n;
@@ -1998,6 +2023,10 @@ export class GameScene extends Phaser.Scene {
         this.toastAchievements(report('level', { level: this.level }));
         this.earnBeans(3, this.w / 2, this.h * 0.42 + 90);
         this.toastMissions(track('level', { level: this.level }));
+        // Every 3 levels of Classic / Zen: a 20 s themed bonus round
+        if ((this.mode === 'classic' || this.zen) && this.level % 3 === 0) {
+            this.time.delayedCall(1800, () => this.startBonus());
+        }
     }
 
     showLevelUp(newOp) {

@@ -106,8 +106,12 @@ export class MenuScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(10);
         y += gap + 8;
 
-        chunkyButton(this, w / 2, y, t('modes'), 0xf59e0b, () => this.openModes(),
-            { width: bw, height: 50, fontSize: 22, delay: 340 });
+        // Modes | Training side by side
+        const half = (bw - 10) / 2;
+        chunkyButton(this, w / 2 - half / 2 - 5, y, t('modes'), 0xf59e0b, () => this.openModes(),
+            { width: half, height: 50, fontSize: half < 110 ? 17 : 20, delay: 340 });
+        chunkyButton(this, w / 2 + half / 2 + 5, y, t('training'), 0x0ea5e9, go('TrainingScene'),
+            { width: half, height: 50, fontSize: half < 110 ? 17 : 20, delay: 360 });
         y += gap - 4;
 
         // Missions / shop / ranking row

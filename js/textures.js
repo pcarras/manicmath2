@@ -27,7 +27,7 @@ function shade(color, f) {
 
 // Textures with hard edges (pieces, rings, ice, hand) are painted at RES; soft FX stay at 1x.
 // Images using a sharp texture are shown at scale INV (see display.js).
-const SHARP = (key) => key.startsWith('piece_') || key.startsWith('prev_') || key === 'ring' || key === 'ice' || key === 'hand' || key === 'sheen';
+const SHARP = (key) => key.startsWith('piece_') || key.startsWith('prev_') || key.startsWith('drill_') || key === 'ring' || key === 'ice' || key === 'hand' || key === 'sheen';
 
 function canvasTexture(scene, key, w, h, draw) {
     if (scene.textures.exists(key)) return;
@@ -800,4 +800,83 @@ function bakePieces(scene, prefix, style) {
 // Shop previews: a few pieces of each theme (never replaced, the theme art does not change)
 export function ensurePreviews(scene, themeId) {
     bakePieces(scene, `prev_${themeId}_`, { theme: themeId, hc: false });
+}
+
+// ------------------------------------------------------------------ drill pieces (baked on demand)
+
+// Number piece with any label ("12", "99"): the font shrinks with the number of digits
+export function bakeLabelPiece(scene, key, label, color) {
+    const S = TEX_SIZE;
+    const c = S / 2;
+    const style = currentStyle();
+    canvasTexture(scene, key, S, S, (ctx) => {
+        drawBall(ctx, c, color, style);
+        const len = String(label).length;
+        ctx.save();
+        ctx.translate(c, c);
+        const k = len <= 1 ? 1 : len === 2 ? 0.82 : 0.62;
+        ctx.scale(k, k);
+        drawNumber(ctx, 0, String(label), style, color);
+        ctx.restore();
+    });
+}
+
+// Fraction as a pizza: num of den slices topped (cheese + pepperoni), the rest empty,
+// with the fraction written on top
+export function bakePizzaPiece(scene, key, num, den, color) {
+    const S = TEX_SIZE;
+    const c = S / 2;
+    canvasTexture(scene, key, S, S, (ctx) => {
+        drawBall(ctx, c, color, currentStyle());
+        const r = R * 0.8;
+        for (let k = 0; k < den; k++) {
+            const a0 = -Math.PI / 2 + (k * 2 * Math.PI) / den;
+            const a1 = a0 + (2 * Math.PI) / den;
+            ctx.beginPath();
+            ctx.moveTo(c, c);
+            ctx.arc(c, c, r, a0, a1);
+            ctx.closePath();
+            ctx.fillStyle = k < num ? '#ffc94a' : 'rgba(20,8,0,0.35)';
+            ctx.fill();
+            ctx.strokeStyle = '#8a4513';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            if (k < num) {
+                const am = (a0 + a1) / 2;
+                ctx.fillStyle = '#d6322b';
+                ctx.beginPath();
+                ctx.arc(c + Math.cos(am) * r * 0.62, c + Math.sin(am) * r * 0.62, Math.max(2.2, r * 0.13), 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = '#c97a2b';
+        ctx.beginPath();
+        ctx.arc(c, c, r, 0, Math.PI * 2);
+        ctx.stroke();
+        drawFraction(ctx, c, c, num, den, R * 0.56);
+    });
+}
+
+// Stacked fraction (numerator over a bar over denominator) with a strong outline
+export function drawFraction(ctx, x, y, num, den, size) {
+    ctx.save();
+    ctx.font = `${Math.round(size)}px Righteous, 'Arial Black', Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(20,8,24,0.95)';
+    ctx.fillStyle = '#ffffff';
+    const dy = size * 0.55;
+    ctx.strokeText(String(num), x, y - dy);
+    ctx.fillText(String(num), x, y - dy);
+    ctx.strokeText(String(den), x, y + dy + 1);
+    ctx.fillText(String(den), x, y + dy + 1);
+    const bw = size * 0.75;
+    ctx.fillStyle = 'rgba(20,8,24,0.95)';
+    ctx.fillRect(x - bw / 2 - 2, y - 3.5, bw + 4, 7);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - bw / 2, y - 1.5, bw, 3);
+    ctx.restore();
 }

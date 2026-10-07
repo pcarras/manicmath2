@@ -6,6 +6,8 @@ import { TestScene } from './scenes/TestScene.js';
 import { AchievementsScene } from './scenes/AchievementsScene.js';
 import { ShopScene } from './scenes/ShopScene.js';
 import { RankingScene } from './scenes/RankingScene.js';
+import { TrainingScene } from './scenes/TrainingScene.js';
+import { DrillScene } from './scenes/DrillScene.js';
 import { initPWA } from './pwa.js';
 import { playIntro } from './bica.js';
 
@@ -53,7 +55,7 @@ const config = {
         default: 'matter',
         matter: MATTER_CONFIG
     },
-    scene: [MenuScene, GameScene, AchievementsScene, ShopScene, RankingScene, TestScene]
+    scene: [MenuScene, GameScene, AchievementsScene, ShopScene, RankingScene, TrainingScene, DrillScene, TestScene]
 };
 
 window.game = new Phaser.Game(config);
